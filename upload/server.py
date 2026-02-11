@@ -32,6 +32,7 @@ except ImportError:
     print("请运行: pip install sssekai msgpack")
 
 app = Flask(__name__, static_folder='.', static_url_path='')
+app.config['JSON_AS_ASCII'] = False  # 让 JSON 响应直接显示中文而不是Unicode转义
 CORS(app)
 
 # 支持的区服列表和对应的 sssekai 密钥名称
@@ -281,31 +282,78 @@ def get_suite_data(region, uid):
     haruki_err = None
     local_path = LUNABOT_DATA_BASE / region / 'suite' / f'{uid}.json'
     
-    # 尝试本地
-    if mode in ['local', 'auto', 'latest']:
-        if local_path.exists():
-            try:
-                data = load_and_filter_json(local_path, filter_keys)
-                return jsonify(data)
-            except Exception as e:
-                return jsonify({'error': f'读取数据失败: {str(e)}'}), 500
-        else:
+    # 辅助函数：获取本地数据
+    def get_local_data():
+        nonlocal local_err
+        if not local_path.exists():
             local_err = '文件不存在'
-            if mode == 'local':
-                return jsonify({'local_err': local_err}), 404
+            return None
+        try:
+            return load_and_filter_json(local_path, filter_keys)
+        except Exception as e:
+            local_err = str(e)
+            return None
     
-    # 尝试 haruki
-    if mode in ['haruki', 'auto', 'latest']:
+    # 辅助函数：获取 haruki 数据
+    def get_haruki_data():
+        nonlocal haruki_err
         haruki_url = f"https://suite-api.haruki.seiunx.com/public/{region}/suite/{uid}"
         if filter_keys:
-            haruki_url += f"?key={','.join(filter_keys)},"
+            haruki_url += f"?key={','.join(filter_keys)}"
         try:
             resp = http_requests.get(haruki_url, timeout=15)
             if resp.ok:
-                return jsonify(resp.json())
+                data = resp.json()
+                if data is not None:
+                    return data
+                haruki_err = '返回数据为空'
+                return None
             haruki_err = f"HTTP {resp.status_code}"
+            return None
         except Exception as e:
             haruki_err = str(e)
+            return None
+    
+    # local 模式：仅本地
+    if mode == 'local':
+        data = get_local_data()
+        if data:
+            return jsonify(data)
+        return jsonify({'local_err': local_err}), 404
+    
+    # haruki 模式：仅 haruki
+    if mode == 'haruki':
+        data = get_haruki_data()
+        if data:
+            return jsonify(data)
+        return jsonify({'haruki_err': haruki_err}), 404
+    
+    # latest 模式：两边都取，比较 upload_time 返回最新的
+    if mode == 'latest':
+        local_data = get_local_data()
+        haruki_data = get_haruki_data()
+        
+        if local_data and haruki_data:
+            local_time = local_data.get('upload_time', 0)
+            haruki_time = haruki_data.get('upload_time', 0)
+            if local_time >= haruki_time:
+                return jsonify(local_data)
+            else:
+                return jsonify(haruki_data)
+        elif local_data:
+            return jsonify(local_data)
+        elif haruki_data:
+            return jsonify(haruki_data)
+        return jsonify({'local_err': local_err, 'haruki_err': haruki_err}), 404
+    
+    # auto 模式（默认）：本地优先，失败回退 haruki
+    local_data = get_local_data()
+    if local_data:
+        return jsonify(local_data)
+    
+    haruki_data = get_haruki_data()
+    if haruki_data:
+        return jsonify(haruki_data)
     
     return jsonify({'local_err': local_err, 'haruki_err': haruki_err}), 404
 
