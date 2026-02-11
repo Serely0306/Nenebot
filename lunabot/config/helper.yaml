@@ -1,0 +1,6 @@
+﻿template: |
+  【LunaBot 使用帮助】
+  发送 /help 服务名 查看对应模块的详细帮助
+  例如发送 /help sekai 查看世界计划相关帮助
+  可查询的服务列表：
+  {service_list}

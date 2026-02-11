@@ -1,6 +1,6 @@
 # secrets
 **/.env
-**/.env.*
+#**/.env.*
 **/*token*
 **/*secret*
 
