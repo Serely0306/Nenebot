@@ -41,9 +41,11 @@
 **/*.so
 
 # 其他自定义
-#config.json
+ZeroBot-Plugin-master/config.json
+ZeroBot-Plugin-master/config1.json
 haruki/
 **/.gitignore
+OneBotFilter-v1.2.2-source/config.yaml
 haruki-tool/Haruki-Sekai-Asset-Updater
 haruki-tool/Haruki-Toolbox-Backend
 haruki-tool/HarukiBot-Docs

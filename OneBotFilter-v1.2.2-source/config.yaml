@@ -1,9 +1,10 @@
 server:
-    host: 127.0.0.1
+    host: 0.0.0.0
     port: 3939
     suffix: /ws
-    bot-id: "548796776"
+    bot-id: "0720"
     user-agent: OneBotFilter
+    access-token: "Alice080306-Sere"
     default:
         private:
             mode: "on"
