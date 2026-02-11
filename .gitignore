@@ -1,0 +1,51 @@
+# secrets
+**/.env
+**/.env.*
+**/*token*
+**/*secret*
+
+# runtime data/cache/logs
+**/data/
+**/cache/
+**/.cache/
+**/tmp/
+**/logs/
+**/*.log
+
+# sqlite/db
+**/*.db
+**/*.db-shm
+**/*.db-wal
+
+# python cache / venv
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+**/venv/
+**/*.pyc
+
+# node
+**/node_modules/
+
+# backups
+**/*.bak
+**/*.old
+**/*.swp
+
+# build outputs / large binaries (按需保留或删除)
+**/*.app
+**/*.exe
+**/*.dll
+**/*.so
+
+# 其他自定义
+config.json
+haruki/
+**/.gitignore
+haruki-tool/Haruki-Sekai-Asset-Updater
+haruki-tool/Haruki-Toolbox-Backend
+haruki-tool/HarukiBot-Docs
+haruki-tool/Haruki-Sekai-API/jp/master
+haruki-tool/Haruki-Sekai-API/cn/master

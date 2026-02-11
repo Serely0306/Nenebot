@@ -1,0 +1,4 @@
+host: 127.0.0.1
+port: 45678
+data_dir: "../../../data/sekai/assets"
+worker_num: 4

@@ -1,0 +1,15 @@
+{
+  "name": "onebot-proxy",
+  "version": "1.0.0",
+  "description": "OneBot v11 WebSocket proxy with group blacklist filtering",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=14"
+  }
+}

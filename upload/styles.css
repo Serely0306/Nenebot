@@ -1,0 +1,507 @@
+:root {
+    --primary: #6c5ce7;
+    --primary-dark: #5b4cdb;
+    --success: #00b894;
+    --error: #d63031;
+    --info: #0984e3;
+    --bg-dark: #0a0a0f;
+    --bg-card: rgba(20, 20, 30, 0.85);
+    --text: #ffffff;
+    --text-muted: #a0a0a0;
+    --border: rgba(255, 255, 255, 0.1);
+    --glass: rgba(255, 255, 255, 0.05);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 50%, #16213e 100%);
+    min-height: 100vh;
+    color: var(--text);
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 30px 20px;
+}
+
+.card {
+    background: var(--bg-card);
+    border-radius: 20px;
+    padding: 32px;
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 28px;
+}
+
+.header h1 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #fff 0%, #a0a0ff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+}
+
+/* 步骤样式 */
+.step {
+    margin-bottom: 24px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+}
+
+.step:last-of-type {
+    border-bottom: none;
+}
+
+.step-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.step-number {
+    width: 28px;
+    height: 28px;
+    background: var(--primary);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.step-title {
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+/* 表单样式 */
+.form-group {
+    margin-bottom: 16px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.select,
+.input {
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 0.95rem;
+    transition: all 0.3s ease;
+}
+
+.select:focus,
+.input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.2);
+}
+
+.select option {
+    background: #1a1a2e;
+    color: var(--text);
+}
+
+/* 查询按钮 */
+.btn-query {
+    width: 100%;
+    padding: 14px;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    border: none;
+    border-radius: 12px;
+    color: white;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.3s ease;
+    margin-top: 8px;
+}
+
+.btn-query:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(108, 92, 231, 0.3);
+}
+
+.btn-query:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-query.loading .btn-text {
+    display: none;
+}
+
+.btn-query.loading::after {
+    content: '查询中...';
+}
+
+/* 查询结果 */
+.query-result {
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 0.9rem;
+}
+
+.query-success {
+    color: var(--success);
+}
+
+.query-error {
+    color: var(--error);
+}
+
+/* 账号列表 */
+.accounts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.account-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.account-item:hover {
+    background: rgba(108, 92, 231, 0.1);
+    border-color: rgba(108, 92, 231, 0.3);
+}
+
+.account-item.selected {
+    background: rgba(108, 92, 231, 0.2);
+    border-color: var(--primary);
+}
+
+.account-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.account-index {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.account-id {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 0.95rem;
+    letter-spacing: 1px;
+}
+
+.account-main-badge {
+    background: var(--primary);
+    color: white;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 20px;
+}
+
+.account-select-icon {
+    color: var(--primary);
+    font-size: 1.2rem;
+}
+
+/* 选中账号信息 */
+.selected-account-info {
+    margin-bottom: 16px;
+}
+
+.selected-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: rgba(108, 92, 231, 0.1);
+    border: 1px solid rgba(108, 92, 231, 0.3);
+    border-radius: 10px;
+    font-size: 0.9rem;
+}
+
+.selected-info .badge {
+    background: var(--primary);
+    color: white;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 20px;
+}
+
+/* 上传区域 */
+.upload-area {
+    border: 2px dashed var(--border);
+    border-radius: 16px;
+    padding: 40px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: var(--glass);
+}
+
+.upload-area:hover,
+.upload-area.dragover {
+    border-color: var(--primary);
+    background: rgba(108, 92, 231, 0.1);
+}
+
+.upload-icon {
+    font-size: 3rem;
+    margin-bottom: 12px;
+}
+
+.upload-text {
+    font-size: 1rem;
+    margin-bottom: 6px;
+}
+
+.upload-hint {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+/* 文件信息 */
+.file-info {
+    display: flex;
+    align-items: center;
+    padding: 16px;
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    gap: 12px;
+}
+
+.file-name {
+    flex: 1;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-size {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.btn-clear {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.btn-clear:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--error);
+}
+
+/* 进度条 */
+.progress-container {
+    margin: 20px 0;
+}
+
+.progress-bar {
+    height: 8px;
+    background: var(--glass);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary) 0%, #00b894 100%);
+    border-radius: 10px;
+    transition: width 0.3s ease;
+}
+
+.progress-text {
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-top: 8px;
+}
+
+/* 上传按钮 */
+.btn-upload {
+    width: 100%;
+    padding: 16px;
+    background: linear-gradient(135deg, var(--success) 0%, #00a185 100%);
+    border: none;
+    border-radius: 12px;
+    color: white;
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    transition: all 0.3s ease;
+    margin-top: 20px;
+}
+
+.btn-upload:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 184, 148, 0.3);
+}
+
+.btn-upload:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-upload.loading .btn-text {
+    display: none;
+}
+
+.btn-upload.loading::after {
+    content: '上传中...';
+}
+
+/* 消息提示 */
+.message {
+    padding: 14px;
+    border-radius: 10px;
+    text-align: center;
+    font-size: 0.9rem;
+    margin-top: 16px;
+    display: none;
+}
+
+.message.success {
+    display: block;
+    background: rgba(0, 184, 148, 0.15);
+    color: var(--success);
+    border: 1px solid rgba(0, 184, 148, 0.3);
+}
+
+.message.error {
+    display: block;
+    background: rgba(214, 48, 49, 0.15);
+    color: var(--error);
+    border: 1px solid rgba(214, 48, 49, 0.3);
+}
+
+.message.info {
+    display: block;
+    background: rgba(9, 132, 227, 0.15);
+    color: var(--info);
+    border: 1px solid rgba(9, 132, 227, 0.3);
+}
+
+/* 帮助区域 */
+.help-section {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+}
+
+.help-section h3 {
+    font-size: 1rem;
+    margin-bottom: 12px;
+}
+
+.help-section ol {
+    padding-left: 20px;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.help-section li {
+    margin-bottom: 8px;
+}
+
+.help-section ul {
+    padding-left: 20px;
+    list-style: disc;
+}
+
+/* 页脚 */
+.footer {
+    text-align: center;
+    margin-top: 24px;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+/* 动画 */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.step {
+    animation: fadeIn 0.4s ease-out;
+}
+
+/* 响应式 */
+@media (max-width: 480px) {
+    .container {
+        padding: 16px;
+    }
+
+    .card {
+        padding: 24px 20px;
+    }
+
+    .header h1 {
+        font-size: 1.5rem;
+    }
+
+    .upload-area {
+        padding: 30px 16px;
+    }
+}
