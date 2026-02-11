@@ -32,7 +32,11 @@ except ImportError:
     print("请运行: pip install sssekai msgpack")
 
 app = Flask(__name__, static_folder='.', static_url_path='')
-app.config['JSON_AS_ASCII'] = False  # 让 JSON 响应直接显示中文而不是Unicode转义
+app.config['JSON_AS_ASCII'] = False
+try:
+    app.json.ensure_ascii = False
+except AttributeError:
+    pass
 CORS(app)
 
 # 支持的区服列表和对应的 sssekai 密钥名称
@@ -336,6 +340,11 @@ def get_suite_data(region, uid):
         if local_data and haruki_data:
             local_time = local_data.get('upload_time', 0)
             haruki_time = haruki_data.get('upload_time', 0)
+            
+            # Haruki API 返回的是秒级时间戳，如果小于 100 亿则认为是秒，转为毫秒
+            if haruki_time < 10000000000:
+                haruki_time *= 1000
+                
             if local_time >= haruki_time:
                 return jsonify(local_data)
             else:
@@ -360,7 +369,7 @@ def get_suite_data(region, uid):
 
 # ==================== 订阅相关 API ====================
 
-@app.route('/api/mysekai/<region>/upload_times', methods=['POST'])
+@app.route('/api/mysekai/<region>/upload_times', methods=['GET','POST'])
 def get_mysekai_upload_times(region):
     """批量获取用户 mysekai 数据的上传时间（供 LunaBot MSR 订阅推送使用）"""
     region = region.lower()
