@@ -41,7 +41,7 @@
 **/*.so
 
 # 其他自定义
-config.json
+#config.json
 haruki/
 **/.gitignore
 haruki-tool/Haruki-Sekai-Asset-Updater

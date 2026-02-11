@@ -149,3 +149,9 @@ bot-apps:
         prefix: []
         prefix-replace: ""
         specific-rules: {}
+    - name: zerobot
+      uri: ws://127.0.0.1:3941/ws
+      access-token: "asdfghjklserealice"
+    - name: lunabot
+      uri: ws://127.0.0.1:3942/onebot/v11/ws
+      access-token: "asdfghjklserealice"
