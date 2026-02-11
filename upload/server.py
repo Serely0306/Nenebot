@@ -19,6 +19,7 @@ import argparse
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
+import requests as http_requests  # 用于 Suite haruki 代理请求
 
 # 解密相关导入
 try:
@@ -143,6 +144,20 @@ def mask_game_id(game_id: str, keep: int = 6) -> str:
     return '*' * (len(game_id) - keep) + game_id[-keep:]
 
 
+def load_and_filter_json(file_path, filter_keys: list):
+    """加载 JSON 文件并按 filter_keys 过滤字段"""
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    if filter_keys:
+        filtered = {k: v for k, v in data.items() if k in filter_keys}
+        # 始终保留元信息字段，确保 LunaBot 数据来源显示正常
+        for meta_key in ['upload_time', 'source', 'local_source']:
+            if meta_key in data:
+                filtered[meta_key] = data[meta_key]
+        return filtered
+    return data
+
+
 @app.route('/')
 def index():
     """提供 Suite 上传页面（主页）"""
@@ -219,23 +234,118 @@ def query_binding():
 
 @app.route('/api/mysekai/<region>/<uid>', methods=['GET'])
 def get_mysekai_data(region, uid):
-    """供 LunaBot 调用的数据获取接口"""
+    """供 LunaBot 调用的 MySekai 数据获取接口（支持 mode/filter）"""
     region = region.lower()
     if region not in VALID_REGIONS:
         return jsonify({'error': f'不支持的区服: {region}'}), 404
     
-    # 构建文件路径
+    mode = request.args.get('mode', 'local')
+    filter_str = request.args.get('filter', '')
+    filter_keys = [k for k in filter_str.split(',') if k]
+    
+    local_err = None
     file_path = LUNABOT_DATA_BASE / region / 'mysekai' / f'{uid}.json'
     
-    if not file_path.exists():
-        return jsonify({'error': '未找到该用户的数据', 'local_err': '文件不存在'}), 404
-        
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        return jsonify(data)
-    except Exception as e:
-        return jsonify({'error': f'读取数据失败: {str(e)}'}), 500
+    # 尝试本地
+    if mode in ['local', 'auto', 'latest']:
+        if file_path.exists():
+            try:
+                data = load_and_filter_json(file_path, filter_keys)
+                return jsonify(data)
+            except Exception as e:
+                return jsonify({'error': f'读取数据失败: {str(e)}'}), 500
+        else:
+            local_err = '文件不存在'
+            if mode == 'local':
+                return jsonify({'local_err': local_err}), 404
+    
+    # 目前 mysekai 暂无 haruki 远程源，仅返回本地错误
+    return jsonify({'local_err': local_err or '文件不存在'}), 404
+
+
+@app.route('/api/suite/<region>/<uid>', methods=['GET'])
+def get_suite_data(region, uid):
+    """供 LunaBot 调用的 Suite 数据获取接口（支持 mode/filter）"""
+    region = region.lower()
+    if region not in VALID_REGIONS:
+        return jsonify({'error': f'不支持的区服: {region}'}), 404
+    
+    mode = request.args.get('mode', 'auto')
+    # 兼容 filter= 和 key= 两种参数格式
+    filter_str = request.args.get('filter', '')
+    if not filter_str:
+        filter_str = request.args.get('key', '')
+    filter_keys = [k for k in filter_str.rstrip(',').split(',') if k]
+    
+    local_err = None
+    haruki_err = None
+    local_path = LUNABOT_DATA_BASE / region / 'suite' / f'{uid}.json'
+    
+    # 尝试本地
+    if mode in ['local', 'auto', 'latest']:
+        if local_path.exists():
+            try:
+                data = load_and_filter_json(local_path, filter_keys)
+                return jsonify(data)
+            except Exception as e:
+                return jsonify({'error': f'读取数据失败: {str(e)}'}), 500
+        else:
+            local_err = '文件不存在'
+            if mode == 'local':
+                return jsonify({'local_err': local_err}), 404
+    
+    # 尝试 haruki
+    if mode in ['haruki', 'auto', 'latest']:
+        haruki_url = f"https://suite-api.haruki.seiunx.com/public/{region}/suite/{uid}"
+        if filter_keys:
+            haruki_url += f"?key={','.join(filter_keys)},"
+        try:
+            resp = http_requests.get(haruki_url, timeout=15)
+            if resp.ok:
+                return jsonify(resp.json())
+            haruki_err = f"HTTP {resp.status_code}"
+        except Exception as e:
+            haruki_err = str(e)
+    
+    return jsonify({'local_err': local_err, 'haruki_err': haruki_err}), 404
+
+
+# ==================== 订阅相关 API ====================
+
+@app.route('/api/mysekai/<region>/upload_times', methods=['POST'])
+def get_mysekai_upload_times(region):
+    """批量获取用户 mysekai 数据的上传时间（供 LunaBot MSR 订阅推送使用）"""
+    region = region.lower()
+    if region not in VALID_REGIONS:
+        return jsonify({'error': f'不支持的区服: {region}'}), 404
+    
+    uid_modes = request.get_json()  # [(uid, mode), ...]
+    if not uid_modes:
+        return jsonify([])  
+    
+    upload_times = []
+    for uid, mode in uid_modes:
+        file_path = LUNABOT_DATA_BASE / region / 'mysekai' / f'{uid}.json'
+        if file_path.exists():
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                upload_times.append(data.get('upload_time', 0))
+            except Exception:
+                upload_times.append(0)
+        else:
+            upload_times.append(0)
+    
+    return jsonify(upload_times)
+
+
+@app.route('/api/mysekai/<region>/msr_sub', methods=['PUT'])
+def update_msr_sub(region):
+    """更新 MSR 订阅用户列表（供 LunaBot 定时任务使用）"""
+    region = region.lower()
+    uid_modes = request.get_json()
+    print(f"更新 {region} MSR 订阅: {len(uid_modes or [])} 个用户")
+    return jsonify({'success': True, 'count': len(uid_modes or [])})
 
 
 # ==================== 代理抓包相关 ====================
@@ -476,7 +586,7 @@ def mysekai_help_android():
 
 Android 使用与 haruki-proxy 类似的原理，具体方法参考 haruki-proxy 教程
 将脚本替换成我所提供的内容
-脚本地址在当前网址后加上 /scripts
+脚本地址在/upload后替换为 /module/android/scripts
 ## 与harukiproxy不同之处
 1. 如果没有harukiproxy证书，注释掉config中指向harukiproxy证书的两行，安装catcher证书后需要重启虚拟机，可在完成2后一起重启
 2. 需要手动设置代理，在设置中的Wifi处长按当前wifi，设置手动代理为127.0.0.1:8888，修改完后重启虚拟机

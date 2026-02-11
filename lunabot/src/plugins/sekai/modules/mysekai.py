@@ -147,7 +147,6 @@ async def get_mysekai_info(
 
         # 尝试下载
         try:
-            url = url.format(uid=uid)
             url = url.format(uid=uid) + f"?mode={mode}"
             if filter:
                 url += f"&filter={','.join(filter)}"
