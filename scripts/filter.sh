@@ -4,7 +4,7 @@ set -Eeuo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 SERVICE="onebot_filter"
-WORKDIR="${BOT_HOME}/OneBotFilter-v1.2.2-source"
+WORKDIR="${BOT_HOME}/OneBotFilter"
 PIDFILE="${PID_DIR}/${SERVICE}.pid"
 LOGFILE="${LOG_DIR}/${SERVICE}.log"
 
