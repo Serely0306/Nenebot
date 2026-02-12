@@ -14,6 +14,7 @@ import (
 type WsServer struct {
 	Conn      *websocket.Conn
 	WsClients []*WsClient
+	BotId     string     // 从OneBot客户端连接中自动获取的bot ID
 	readChan  chan WsMsg //从OneBot客户端读取到的消息
 	writeChan chan WsMsg //写入到OneBot客户端的消息
 	// mutex     sync.Mutex

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	filter "onebotfilter/src"
+	"strings"
 
 	"github.com/gorilla/websocket"
 )
@@ -65,6 +65,20 @@ func handleLocal(w http.ResponseWriter, r *http.Request) {
 	}
 	// defer conn.Close()
 	wss.Conn = conn
+
+	// 自动从NapCat/LLBot的请求头中获取bot ID
+	selfId := r.Header.Get("X-Self-ID")
+	if selfId != "" {
+		wss.BotId = selfId
+		filter.CONFIG.Server.BotId = selfId
+		log.Printf("已自动识别Bot ID: %s\n", selfId)
+	} else if filter.CONFIG.Server.BotId != "" {
+		wss.BotId = filter.CONFIG.Server.BotId
+		log.Printf("使用配置中的Bot ID: %s\n", wss.BotId)
+	} else {
+		log.Println("警告：未能获取Bot ID，请在config.yaml中配置bot-id")
+	}
+
 	log.Println("已连接到OneBot客户端")
 	err = wss.WsServerHandler()
 	if err != nil {

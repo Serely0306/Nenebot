@@ -27,19 +27,30 @@ func WsClientHandler(wss *WsServer, cfg BotAppsConfig) {
 		log.Printf("%s的配置有问题: %v\n", cfg.Name, err)
 		return
 	}
-	//onebot header
-	header := http.Header{}
-	header.Set("x-self-id", CONFIG.Server.BotId)
-	header.Set("authorization", fmt.Sprintf("Bearer %s", cfg.AccessToken))
-	header.Set("user-agent", CONFIG.Server.UserAgent)
-	header.Set("x-client-role", "Universal")
 	//filter
 	filter := (&Filter{Name: cfg.Name}).Compile(cfg)
 	AddFilter(filter)
 	defer RemoveFilter(filter.Name)
 	//client
 	for { //循环重连，转发消息
-		log.Printf("正在连接：%s\n", cfg.Name)
+		// 等待Bot ID被设置（从OneBot客户端连接中自动获取）
+		for wss.BotId == "" && CONFIG.Server.BotId == "" {
+			log.Printf("等待OneBot客户端连接以获取Bot ID...\n")
+			time.Sleep(time.Duration(CONFIG.Server.SleepTime) * time.Second)
+		}
+
+		//onebot header（每次重连时刷新，使用最新的BotId）
+		header := http.Header{}
+		botId := wss.BotId
+		if botId == "" {
+			botId = CONFIG.Server.BotId
+		}
+		header.Set("x-self-id", botId)
+		header.Set("authorization", fmt.Sprintf("Bearer %s", cfg.AccessToken))
+		header.Set("user-agent", CONFIG.Server.UserAgent)
+		header.Set("x-client-role", "Universal")
+
+		log.Printf("正在连接：%s (Bot ID: %s)\n", cfg.Name, botId)
 
 		dialer := &websocket.Dialer{
 			Proxy:            http.ProxyFromEnvironment,
