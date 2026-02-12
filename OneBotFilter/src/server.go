@@ -180,7 +180,12 @@ func (wss *WsServer) writeLoop(ctx context.Context) {
 	for {
 		select {
 		case msg := <-wss.writeChan:
-			if err := wss.Conn.WriteMessage(msg.MsgType, msg.MsgData); err != nil {
+			data := msg.MsgData
+			// 对文本消息进行 file:// -> http:// 转换
+			if msg.MsgType == 1 { // websocket.TextMessage
+				data = ConvertFileToURL(data)
+			}
+			if err := wss.Conn.WriteMessage(msg.MsgType, data); err != nil {
 				log.Println("写入到OneBot客户端出错：", err)
 			}
 		case <-ctx.Done():

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	filter "onebotfilter/src"
+	"path/filepath"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -44,6 +45,48 @@ func checkAccessToken(r *http.Request) bool {
 	}
 
 	return false
+}
+
+// handleFileServer 处理文件服务请求
+// 验证access-token和路径安全性后提供文件下载
+func handleFileServer(w http.ResponseWriter, r *http.Request) {
+	// 验证access-token
+	if !checkAccessToken(r) {
+		http.Error(w, "access-token验证失败", http.StatusUnauthorized)
+		return
+	}
+
+	cfg := filter.CONFIG.Server.FileServer
+	if !cfg.Enabled || cfg.Root == "" {
+		http.Error(w, "文件服务未启用", http.StatusNotFound)
+		return
+	}
+
+	// 提取请求的相对路径
+	relPath := strings.TrimPrefix(r.URL.Path, "/files/")
+	if relPath == "" {
+		http.Error(w, "未指定文件路径", http.StatusBadRequest)
+		return
+	}
+
+	// 构建绝对路径并进行安全检查
+	root := filepath.Clean(cfg.Root)
+	fullPath := filepath.Join(root, filepath.Clean("/"+relPath))
+	fullPath = filepath.Clean(fullPath)
+
+	// 防止路径穿越攻击
+	if !strings.HasPrefix(fullPath, root) {
+		log.Printf("文件服务：路径穿越攻击被阻止: %s\n", r.URL.Path)
+		http.Error(w, "禁止访问", http.StatusForbidden)
+		return
+	}
+
+	if filter.CONFIG.Server.Debug {
+		log.Printf("文件服务：提供文件: %s\n", fullPath)
+	}
+
+	// 提供文件
+	http.ServeFile(w, r, fullPath)
 }
 
 func handleLocal(w http.ResponseWriter, r *http.Request) {
@@ -96,13 +139,22 @@ func main() {
 	upgrader.ReadBufferSize = filter.CONFIG.Server.BufferSize
 	upgrader.WriteBufferSize = filter.CONFIG.Server.BufferSize
 	http.HandleFunc(filter.CONFIG.Server.Suffix, handleLocal)
+
+	// 注册文件服务
+	if filter.CONFIG.Server.FileServer.Enabled {
+		http.HandleFunc("/files/", handleFileServer)
+		log.Printf("文件服务已启用 root: %s, public-url: %s\n",
+			filter.CONFIG.Server.FileServer.Root,
+			filter.CONFIG.Server.FileServer.PublicURL)
+	}
+
 	go func() {
 		for _, bacfg := range filter.CONFIG.BotApps {
 			go filter.WsClientHandler(wss, bacfg)
 		}
 	}()
 
-	log.Printf("OneBotFilter已启动 ws://%s:%d/%s\n", filter.CONFIG.Server.Host, filter.CONFIG.Server.Port, filter.CONFIG.Server.Suffix)
+	log.Printf("OneBotFilter已启动 ws://%s:%d%s\n", filter.CONFIG.Server.Host, filter.CONFIG.Server.Port, filter.CONFIG.Server.Suffix)
 	if err := http.ListenAndServe(fmt.Sprintf("%s:%d", filter.CONFIG.Server.Host, filter.CONFIG.Server.Port), nil); err != nil {
 		log.Fatal("监听服务出错:", err)
 	}

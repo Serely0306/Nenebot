@@ -61,9 +61,7 @@ func (c *Config) Check() error {
 	if c.Server.Port == 0 {
 		return errors.New("server.port不能为0")
 	}
-	if c.Server.BotId == "" {
-		return errors.New("server.bot-id不能为空")
-	}
+	// bot-id 可以为空（自动从OneBot客户端获取）
 	if c.Server.UserAgent == "" {
 		return errors.New("server.user-agent不能为空")
 	}
@@ -98,10 +96,17 @@ type ServerConfig struct {
 			Ids  []int64 `mapstructure:"ids" yaml:"ids"`
 		} `mapstructure:"group" yaml:"group"`
 	} `mapstructure:"default" yaml:"default"`
-	BufferSize  int     `mapstructure:"buffer-size" yaml:"buffer-size"`
-	SleepTime   float32 `mapstructure:"sleep-time" yaml:"sleep-time"` //重新连接的间隔，单位秒
-	Debug       bool    `mapstructure:"debug" yaml:"debug"`
-	AccessToken string  `mapstructure:"access-token" yaml:"access-token"` //连接到本服务的access-token认证
+	BufferSize  int              `mapstructure:"buffer-size" yaml:"buffer-size"`
+	SleepTime   float32          `mapstructure:"sleep-time" yaml:"sleep-time"` //重新连接的间隔，单位秒
+	Debug       bool             `mapstructure:"debug" yaml:"debug"`
+	AccessToken string           `mapstructure:"access-token" yaml:"access-token"` //连接到本服务的access-token认证
+	FileServer  FileServerConfig `mapstructure:"file-server" yaml:"file-server"`   //文件服务配置
+}
+
+type FileServerConfig struct {
+	Enabled   bool   `mapstructure:"enabled" yaml:"enabled"`       //是否启用文件服务
+	Root      string `mapstructure:"root" yaml:"root"`             //允许访问的根目录
+	PublicURL string `mapstructure:"public-url" yaml:"public-url"` //外部访问的URL前缀
 }
 type BotAppsConfig struct {
 	Name        string            `mapstructure:"name" yaml:"name"`
