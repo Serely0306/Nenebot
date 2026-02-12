@@ -3,7 +3,6 @@ package onebotfilter
 import (
 	"fmt"
 	"log"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -117,12 +116,8 @@ func convertPathToURL(filePath string, cfg FileServerConfig) string {
 
 	// 使用正斜杠确保URL格式正确
 	relPath = filepath.ToSlash(relPath)
-	// URL 编码路径中的特殊字符（保留/）
-	segments := strings.Split(relPath, "/")
-	for i, seg := range segments {
-		segments[i] = url.PathEscape(seg)
-	}
-	relPath = strings.Join(segments, "/")
+	// 注意：不要预先URL编码，因为NapCat会自行编码
+	// 若预编码则NapCat会二次编码(%→%25)导致404
 
 	// 使用路径内嵌 token 格式: /files/{token}/path
 	// 这样 NapCat 不需要额外处理 query parameter
