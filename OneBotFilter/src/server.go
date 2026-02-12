@@ -214,3 +214,19 @@ func (wss *WsServer) SendCommandResponse(response map[string]interface{}) error 
 
 	return nil
 }
+
+// 强制断开所有bot客户端连接（触发重连）
+// 当NapCat的bot ID变化时调用，让bot客户端重新连接以更新Header
+func (wss *WsServer) DisconnectAllClients() {
+	log.Println("正在断开所有下游Bot客户端连接以重置状态...")
+	// 复制一份列表以避免并发修改问题
+	clients := make([]*WsClient, len(wss.WsClients))
+	copy(clients, wss.WsClients)
+
+	for _, client := range clients {
+		log.Printf("强制断开: %s\n", client.Name)
+		if client.conn != nil {
+			client.conn.Close()
+		}
+	}
+}

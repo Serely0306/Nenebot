@@ -110,16 +110,28 @@ func handleLocal(w http.ResponseWriter, r *http.Request) {
 	wss.Conn = conn
 
 	// 自动从NapCat/LLBot的请求头中获取bot ID
-	selfId := r.Header.Get("X-Self-ID")
+	var newBotId string
+	selfId := strings.TrimSpace(r.Header.Get("X-Self-ID"))
+
 	if selfId != "" {
-		wss.BotId = selfId
-		filter.CONFIG.Server.BotId = selfId
+		newBotId = selfId
 		log.Printf("已自动识别Bot ID: %s\n", selfId)
 	} else if filter.CONFIG.Server.BotId != "" {
-		wss.BotId = filter.CONFIG.Server.BotId
-		log.Printf("使用配置中的Bot ID: %s\n", wss.BotId)
+		newBotId = filter.CONFIG.Server.BotId
+		log.Printf("使用配置中的Bot ID: %s\n", newBotId)
 	} else {
 		log.Println("警告：未能获取Bot ID，请在config.yaml中配置bot-id")
+	}
+
+	// 检查 Bot ID 是否发生变化
+	if newBotId != "" {
+		if wss.BotId != "" && wss.BotId != newBotId {
+			log.Printf("检测到Bot ID变更 (%s -> %s)，正在重置所有连接...\n", wss.BotId, newBotId)
+			// 断开所有现有连接，迫使它们重新连接并使用新的 ID
+			wss.DisconnectAllClients()
+		}
+		wss.BotId = newBotId
+		filter.CONFIG.Server.BotId = newBotId
 	}
 
 	log.Println("已连接到OneBot客户端")
