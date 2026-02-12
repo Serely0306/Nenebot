@@ -48,22 +48,49 @@ func checkAccessToken(r *http.Request) bool {
 }
 
 // handleFileServer 处理文件服务请求
-// 验证access-token和路径安全性后提供文件下载
+// 支持路径内嵌 token 格式: /files/{token}/relpath
+// 也支持无 token 格式: /files/relpath (此时通过 query parameter 或 header 验证)
 func handleFileServer(w http.ResponseWriter, r *http.Request) {
-	// 验证access-token
-	if !checkAccessToken(r) {
-		http.Error(w, "access-token验证失败", http.StatusUnauthorized)
-		return
-	}
-
 	cfg := filter.CONFIG.Server.FileServer
 	if !cfg.Enabled || cfg.Root == "" {
 		http.Error(w, "文件服务未启用", http.StatusNotFound)
 		return
 	}
 
-	// 提取请求的相对路径
-	relPath := strings.TrimPrefix(r.URL.Path, "/files/")
+	// 提取 /files/ 后面的路径
+	remainPath := strings.TrimPrefix(r.URL.Path, "/files/")
+	if remainPath == "" {
+		http.Error(w, "未指定文件路径", http.StatusBadRequest)
+		return
+	}
+
+	expectedToken := filter.CONFIG.Server.AccessToken
+	var relPath string
+
+	if expectedToken != "" {
+		// 尝试从路径中提取 token: /files/{token}/relpath
+		slashIdx := strings.Index(remainPath, "/")
+		if slashIdx > 0 {
+			pathToken := remainPath[:slashIdx]
+			if pathToken == expectedToken {
+				// token 匹配，提取相对路径
+				relPath = remainPath[slashIdx+1:]
+			}
+		}
+
+		// 如果路径中没有 token，回退到 query parameter / header 验证
+		if relPath == "" {
+			if !checkAccessToken(r) {
+				http.Error(w, "access-token验证失败", http.StatusUnauthorized)
+				return
+			}
+			relPath = remainPath
+		}
+	} else {
+		// 未配置 token，直接使用路径
+		relPath = remainPath
+	}
+
 	if relPath == "" {
 		http.Error(w, "未指定文件路径", http.StatusBadRequest)
 		return
