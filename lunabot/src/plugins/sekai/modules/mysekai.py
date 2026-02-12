@@ -2281,8 +2281,9 @@ async def msr_auto_push():
                 
         for qid, gid in msr_sub.get_all_gid_uid(region):
             if check_in_blacklist(qid): continue
-            if not gbl.check_id(gid): continue
-            if region in bd_msr_sub.regions and not bd_msr_sub.is_subbed(region, gid): continue
+            if gid is not None:
+                if not gbl.check_id(gid): continue
+                if region in bd_msr_sub.regions and not bd_msr_sub.is_subbed(region, gid): continue
             
             for i in range(get_player_bind_count(ctx, qid)):
                 msr_last_push_time = file_db.get(f"{region}_msr_last_push_time", {})
@@ -2307,25 +2308,34 @@ async def msr_auto_push():
             gid, qid, uid = task
             user_ctx = SekaiHandlerContext.from_region(region)
             user_ctx.user_id = int(qid)
-            user_ctx.group_id = int(gid)
+            user_ctx.group_id = int(gid) if gid is not None else None
 
             index = get_player_bind_id_index(ctx, qid, uid)
             if index is None: return
             user_ctx.uid_arg = f"u{index+1}"
             
             try:
-                logger.info(f"在 {gid} 中自动推送用户 {qid} 的{region_name}Mysekai资源查询")
                 contents = [
                     await get_image_cq(img, low_quality=True) for img in 
                     await compose_mysekai_res_image(user_ctx, qid, False, True)
                 ]
-                contents = [f"[CQ:at,qq={qid}]的{region_name}MSR推送"] + contents
-                await send_group_msg_by_bot(gid, "".join(contents))
+                if gid is not None:
+                    logger.info(f"在 {gid} 中自动推送用户 {qid} 的{region_name}Mysekai资源查询")
+                    contents = [f"[CQ:at,qq={qid}]的{region_name}MSR推送"] + contents
+                    await send_group_msg_by_bot(gid, "".join(contents))
+                else:
+                    logger.info(f"私聊自动推送用户 {qid} 的{region_name}Mysekai资源查询")
+                    contents = [f"你的{region_name}MSR推送"] + contents
+                    await send_private_msg_by_bot(qid, "".join(contents))
             except MsrIdNotMatchException as e:
-                logger.warning(f'在 {gid} 中自动推送用户 {qid} 的{region_name}Mysekai资源查询失败: 限制id不匹配')
+                logger.warning(f'自动推送用户 {qid} 的{region_name}Mysekai资源查询失败: 限制id不匹配')
             except Exception as e:
-                logger.print_exc(f'在 {gid} 中自动推送用户 {qid} 的{region_name}Mysekai资源查询失败')
-                try: await send_group_msg_by_bot(gid, f"自动推送用户 [CQ:at,qq={qid}] 的{region_name}Mysekai资源查询失败: {get_exc_desc(e)}")
+                logger.print_exc(f'自动推送用户 {qid} 的{region_name}Mysekai资源查询失败')
+                try:
+                    if gid is not None:
+                        await send_group_msg_by_bot(gid, f"自动推送用户 [CQ:at,qq={qid}] 的{region_name}Mysekai资源查询失败: {get_exc_desc(e)}")
+                    else:
+                        await send_private_msg_by_bot(qid, f"你的{region_name}Mysekai资源查询自动推送失败: {get_exc_desc(e)}")
                 except: pass
 
         await batch_gather(*[push(task) for task in tasks], batch_size=MSR_PUSH_CONCURRENCY_CFG.get())

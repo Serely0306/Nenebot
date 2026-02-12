@@ -164,7 +164,7 @@ class SekaiUserSubHelper:
                 file_db,
                 logger,
                 key_fn=lambda uid, gid: f"{uid}@{gid}", 
-                val_fn=lambda x: list(map(int, x.split("@")))
+                val_fn=lambda x: [int(v) if v != 'None' else None for v in x.split("@")]
             ) for region, region_name in zip(regions, ALL_SERVER_REGION_NAMES)
         }
         self.only_one_group = only_one_group
@@ -223,7 +223,7 @@ class SekaiUserSubHelper:
         ret = self.subs[region].get_all()
         return [x[0] for x in ret if x[1] == group_id]
     
-    def get_all_gid_uid(self, region) -> List[Tuple[int, int]]:
+    def get_all_gid_uid(self, region) -> List[Tuple[int, Optional[int]]]:
         self._check_region(region)
         return self.subs[region].get_all()
 

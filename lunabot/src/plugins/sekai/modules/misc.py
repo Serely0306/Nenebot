@@ -438,7 +438,7 @@ async def msr_auto_push():
                 
         for qid, gid in ad_result_sub.get_all_gid_uid(region):
             if check_in_blacklist(qid): continue
-            if not gbl.check_id(gid): continue
+            if gid is not None and not gbl.check_id(gid): continue
 
             for i in range(get_player_bind_count(ctx, qid)):
                 ad_result_pushed_time = file_db.get(f"{region}_ad_result_pushed_time", {})
@@ -462,20 +462,29 @@ async def msr_auto_push():
         async def push(task):
             gid, qid, uid = task
             try:
-                logger.info(f"在 {gid} 中自动推送用户 {qid} 的广告奖励")
-
                 res = await request_gameapi(result_url.format(uid=uid))
                 if not res.get('results'):
                     return
                 
-                msg = f"[CQ:at,qq={qid}]的{region_name}广告奖励\n"
-                msg += f"{datetime.fromtimestamp(res['time']).strftime('%Y-%m-%d %H:%M:%S')}\n"
-                msg += "\n".join(res['results'])
-
-                await send_group_msg_by_bot(gid, msg.strip())
+                if gid is not None:
+                    logger.info(f"在 {gid} 中自动推送用户 {qid} 的广告奖励")
+                    msg = f"[CQ:at,qq={qid}]的{region_name}广告奖励\n"
+                    msg += f"{datetime.fromtimestamp(res['time']).strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    msg += "\n".join(res['results'])
+                    await send_group_msg_by_bot(gid, msg.strip())
+                else:
+                    logger.info(f"私聊自动推送用户 {qid} 的广告奖励")
+                    msg = f"你的{region_name}广告奖励\n"
+                    msg += f"{datetime.fromtimestamp(res['time']).strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    msg += "\n".join(res['results'])
+                    await send_private_msg_by_bot(qid, msg.strip())
             except Exception as e:
-                logger.print_exc(f'在 {gid} 中自动推送用户 {qid} 的{region_name}广告奖励失败')
-                try: await send_group_msg_by_bot(gid, f"自动推送用户 [CQ:at,qq={qid}] 的{region_name}广告奖励失败: {get_exc_desc(e)}")
+                logger.print_exc(f'自动推送用户 {qid} 的{region_name}广告奖励失败')
+                try:
+                    if gid is not None:
+                        await send_group_msg_by_bot(gid, f"自动推送用户 [CQ:at,qq={qid}] 的{region_name}广告奖励失败: {get_exc_desc(e)}")
+                    else:
+                        await send_private_msg_by_bot(qid, f"你的{region_name}广告奖励自动推送失败: {get_exc_desc(e)}")
                 except: pass
 
         await batch_gather(*[push(task) for task in tasks])
