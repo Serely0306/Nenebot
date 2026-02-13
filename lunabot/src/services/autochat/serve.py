@@ -481,12 +481,17 @@ async def chat(msg: Message):
                 return
             # 获取at和回复
             at_id, reply_id = None, None
-            # 匹配 [@id]
-            if at_match := re.search(r"\[@(\d+)\]", text):
-                at_id = int(at_match.group(1))
-                text = text.replace(at_match.group(0), "")
-                if any(m.user_id == at_id for m in recent_msgs):
-                    text = f"[CQ:at,qq={at_id}]" + text
+            # 匹配 [@id] 或 @id，避免把qq号原样发出
+            at_candidates = [int(x) for x in re.findall(r"\[@\s*(\d{5,12})\]", text)]
+            at_candidates += [int(x) for x in re.findall(r"(?<!\d)@(\d{5,12})(?!\d)", text)]
+            for candidate in at_candidates:
+                if any(m.user_id == candidate for m in recent_msgs):
+                    at_id = candidate
+                    break
+            text = re.sub(r"\[@\s*\d{5,12}\]", "", text)
+            text = re.sub(r"(?<!\d)@(\d{5,12})(?!\d)", "", text)
+            if at_id is not None:
+                text = f"[CQ:at,qq={at_id}]" + text
             # 匹配 [reply=id]
             if reply_match := re.search(r"\[reply=(\d+)\]", text):
                 reply_id = int(reply_match.group(1))
