@@ -2,9 +2,9 @@ qps_limit: 5
 quota_sync_interval_sec: 60*60*6
 price_unit: "￥"
 
-api_key: "xxx"
-base_url: "https://xxx/v1"
-user_info_url: "https://xxx/v1/user/info"
+api_key: ""
+base_url: "https://api.siliconflow.cn/v1"
+user_info_url: "https://api.siliconflow.cn/v1/user/info"
 
 models:
   - name: "deepseek-r1"

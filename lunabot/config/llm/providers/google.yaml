@@ -3,9 +3,9 @@ quota_sync_interval_sec: 60*60*6
 price_unit: "$"
 
 http_options:
-  base_url: "127.0.0.1:7861"
+  base_url: "http://127.0.0.1:7861"
   api_version: "v1"
-api_key: "Alice080306-Sere"
+api_key: ""
 
 models:
 

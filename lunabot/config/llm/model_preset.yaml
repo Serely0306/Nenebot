@@ -1,4 +1,4 @@
-basic_chat_mm: gg:gemini-2.5-flash-thinking
+basic_chat_mm: gg:gemini-3-flash
 
 translation: 
   - gg:gemini-2.5-flash

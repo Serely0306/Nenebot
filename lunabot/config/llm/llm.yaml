@@ -11,7 +11,7 @@ text_embedding_models:                    # 可用文本嵌入模型列表
   - name: "sf-qwen3-embedding-8b"
     provider: "sf"
     id: "Qwen/Qwen3-Embedding-8B"
-    input_pricing:  0.00000004 
+    input_pricing:  0.00000028 
     embed_dim: 4096
 
 tts_models:                               # 文本转语音模型列表
