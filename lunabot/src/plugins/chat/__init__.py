@@ -746,36 +746,9 @@ async def _(ctx: HandlerContext):
     path = f"data/chat/autochat/memory_{ctx.group_id}.json"
     if os.path.exists(path):
         mem = load_json(path)
-        um = mem.get("ums", {}).get(str(qid), {})
+        um = mem.get("ums", {}).get(str(qid), {}).get("text", None)
     
     if not um:
-        return await ctx.asend_reply_msg(f"对@{nickname}的记忆: 无")
+        return await ctx.asend_reply_msg(f"对@{nickname}的印象: 无")
 
-    if isinstance(um, str):
-        return await ctx.asend_reply_msg(f"对@{nickname}的记忆\n{um}")
-
-    if not isinstance(um, dict):
-        return await ctx.asend_reply_msg(f"对@{nickname}的记忆: 无")
-
-    legacy_text = um.get("text", "")
-    names = um.get("names", [])
-    profile = um.get("profile", "") or legacy_text
-    recent_events = um.get("recent_events", [])
-
-    um_text = f"对@{nickname}的记忆\n"
-    if names:
-        um_text += f"【曾用名】\n{', '.join(names)}\n"
-    if profile:
-        um_text += f"【用户画像】\n{profile}\n"
-    if recent_events:
-        um_text += "【近期事件】\n"
-        for t, event in recent_events:
-            try:
-                formated_time = datetime.fromtimestamp(t).strftime("%m-%d %H:%M")
-                um_text += f"[{formated_time}] {event}\n"
-            except Exception:
-                um_text += f"{event}\n"
-
-    if um_text.strip() == f"对@{nickname}的记忆":
-        return await ctx.asend_reply_msg(f"对@{nickname}的记忆: 无")
-    return await ctx.asend_fold_msg_adaptive(um_text.strip())
+    return await ctx.asend_reply_msg(f"对@{nickname}的印象:\n{um}")
