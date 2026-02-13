@@ -1,0 +1,6 @@
+# 让 Git 自动把文本文件规范化存储为 LF（仓库里是 LF）
+* text=auto
+
+# 明确要求必须 LF 的文件类型（避免在 Linux 上出问题）
+*.sh text eol=lf
+*.bash text eol=lf
