@@ -31,7 +31,7 @@ import (
 
 const (
 	// 本地背景图片路径
-	backgroundPath = "/root/bot/lunabot/gallery/群Nene"
+	backgroundPath = "/root/bot/lunabot/data/gallery/群Nene"
 	// API背景图片URL
 	backgroundURL = "https://t.alcy.cc/fj"
 	signinMax     = 1
@@ -57,14 +57,15 @@ var (
 	// 定义使用本地背景的群聊ID列表
 	// 在这里添加您想要使用本地背景的群聊ID
 	localBackgroundGroups = map[int64]bool{
-		985432150: true,
+		985432150:  true,
+		1030497031: true,
 	}
 )
 
 func init() {
 	cachePath := engine.DataFolder() + "cache/"
 	// 创建背景图片目录
-	bgPath := filepath.Join(engine.DataFolder(), backgroundPath)
+	bgPath := backgroundPath
 	go func() {
 		sdb = initialize(engine.DataFolder() + "score.db")
 
@@ -320,7 +321,7 @@ func init() {
 
 	// 添加命令：查看背景图片列表
 	engine.OnFullMatch("查看背景图片", zero.SuperUserPermission).SetBlock(true).Handle(func(ctx *zero.Ctx) {
-		bgPath := filepath.Join(engine.DataFolder(), backgroundPath)
+		bgPath := backgroundPath
 		files, err := os.ReadDir(bgPath)
 		if err != nil {
 			ctx.SendChain(message.Text("读取背景图片目录失败: ", err))
@@ -413,7 +414,7 @@ func initPic(picFile string, uid int64, gid int64) (avatar []byte, err error) {
 
 // 从本地背景图片目录随机选择一张图片
 func getLocalBackgroundImage(picFile string) error {
-	bgPath := filepath.Join(engine.DataFolder(), backgroundPath)
+	bgPath := backgroundPath
 
 	// 检查目录是否存在
 	if !file.IsExist(bgPath) {
@@ -464,7 +465,7 @@ func getLocalBackgroundImage(picFile string) error {
 // 使用"file:"发送图片失败后，改用base64发送
 func trySendImage(filePath string, ctx *zero.Ctx) {
 	filePath = file.BOTPATH + "/" + filePath
-	if id := ctx.SendChain(message.Image("file:///" + filePath)); id.ID() != 0 {
+	if id := ctx.SendChain(message.Image("file://" + filePath)); id.ID() != 0 {
 		return
 	}
 	imgFile, err := os.Open(filePath)
