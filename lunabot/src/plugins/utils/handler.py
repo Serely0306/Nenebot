@@ -2222,9 +2222,8 @@ class CmdHandler:
                     # 禁止私聊自己的指令生效
                     # 禁止私聊自己的指令生效（需要超管权限的指令除外）
                     if not is_group_msg(event) and event.user_id == event.self_id:
-                        if not self.superuser_check:  # 如果不是超管指令，则拦截
-                            self.logger.warning(f'取消私聊自己的指令处理')
-                            return
+                        self.logger.warning(f'取消私聊自己的指令处理')
+                        return
                     
                     # 禁止bot回复自己的消息重复触发
                     if not self.allow_bot_reply_msg and event.message_id in _bot_reply_msg_ids:

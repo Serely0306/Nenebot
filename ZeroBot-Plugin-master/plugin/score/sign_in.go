@@ -31,7 +31,7 @@ import (
 
 const (
 	// 本地背景图片路径
-	backgroundPath = "backgrounds"
+	backgroundPath = "/root/bot/lunabot/gallery/群Nene"
 	// API背景图片URL
 	backgroundURL = "https://t.alcy.cc/fj"
 	signinMax     = 1
