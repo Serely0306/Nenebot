@@ -465,7 +465,7 @@ func getLocalBackgroundImage(picFile string) error {
 // 使用"file:"发送图片失败后，改用base64发送
 func trySendImage(filePath string, ctx *zero.Ctx) {
 	filePath = file.BOTPATH + "/" + filePath
-	if id := ctx.SendChain(message.Image("file://" + filePath)); id.ID() != 0 {
+	if id := ctx.SendChain(message.Image("file:///" + filePath)); id.ID() != 0 {
 		return
 	}
 	imgFile, err := os.Open(filePath)

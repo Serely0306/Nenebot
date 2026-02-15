@@ -88,6 +88,23 @@ func (wss *WsServer) readLoop(ctx context.Context) {
 		select {
 		case msg := <-wss.readChan:
 			if msg.MsgType == websocket.TextMessage {
+				// 简单的日志记录用于调试
+				var debugMsg map[string]interface{}
+				if err := json.Unmarshal(msg.MsgData, &debugMsg); err == nil {
+					if postType, ok := debugMsg["post_type"].(string); ok {
+						// 是事件
+						msgType, _ := debugMsg["message_type"].(string)
+						subType, _ := debugMsg["sub_type"].(string)
+						userId, _ := debugMsg["user_id"].(float64) // json number -> float64
+						groupId, _ := debugMsg["group_id"].(float64)
+						log.Printf("[OneBot] Event: post_type=%s msg_type=%s sub_type=%s group=%d user=%d\n",
+							postType, msgType, subType, int64(groupId), int64(userId))
+					} else if echo, ok := debugMsg["echo"].(string); ok {
+						// 是API响应
+						log.Printf("[OneBot] ApiResp: echo=%s retcode=%v\n", echo, debugMsg["retcode"])
+					}
+				}
+
 				onebotMessage := ParseOneBotMessage(msg.MsgData)
 				if onebotMessage != nil && onebotMessage.Partial.MessageType == GROUP {
 					// 尝试作为命令处理

@@ -31,6 +31,12 @@ func ConvertFileToURL(msgData []byte) []byte {
 	msg := string(msgData)
 	changed := false
 
+	// 0. 归一化: file:////+ → file:/// (修复 ZeroBot 中 file.BOTPATH 绝对路径导致的多余斜杠)
+	for strings.Contains(msg, "file:////") {
+		msg = strings.ReplaceAll(msg, "file:////", "file:///")
+		changed = true
+	}
+
 	// 1. 替换 file:// 前缀的路径
 	// file:///root/bot/xxx -> http://server/files/token/xxx
 	oldFileURL := "file://" + root
