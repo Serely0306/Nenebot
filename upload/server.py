@@ -67,6 +67,60 @@ LUNABOT_DATA_BASE = LUNABOT_BASE / 'data' / 'sekai' / 'user_data'
 PROFILE_DB_PATH = LUNABOT_BASE / 'data' / 'sekai' / 'profile' / 'db.json'
 
 
+# ==================== Suite Compact 展开工具 ====================
+
+def expand_compact_field(compact_data: dict) -> list:
+    """将一个 compact 格式的字典展开为对象数组
+    
+    compact 结构: __ENUM__ 定义枚举映射 (整数索引 -> 字符串), 其余字段为等长数组
+    """
+    enum_map = compact_data.get('__ENUM__', {})
+    data_fields = {k: v for k, v in compact_data.items() if k != '__ENUM__'}
+    
+    if not data_fields:
+        return []
+    
+    first_field = next(iter(data_fields.values()))
+    if not isinstance(first_field, list):
+        return []
+    
+    count = len(first_field)
+    result = []
+    for i in range(count):
+        obj = {}
+        for field_name, values in data_fields.items():
+            raw_value = values[i]
+            if field_name in enum_map:
+                enum_values = enum_map[field_name]
+                if isinstance(raw_value, int) and 0 <= raw_value < len(enum_values):
+                    obj[field_name] = enum_values[raw_value]
+                else:
+                    obj[field_name] = raw_value
+            else:
+                obj[field_name] = raw_value
+        result.append(obj)
+    
+    return result
+
+
+def process_suite_compact(data: dict) -> dict:
+    """展开 suite 数据中所有 compact 前缀字段
+    
+    compactUserXxx -> userXxx (去掉 compact 前缀, 首字母小写)
+    """
+    result = {}
+    for key, value in data.items():
+        if key.startswith('compact') and isinstance(value, dict):
+            expanded_key = key[len('compact'):]
+            expanded_key = expanded_key[0].lower() + expanded_key[1:]
+            expanded = expand_compact_field(value)
+            result[expanded_key] = expanded
+            print(f"  [compact] {key} -> {expanded_key}: {len(expanded)} 条")
+        else:
+            result[key] = value
+    return result
+
+
 def load_profile_db() -> dict:
     """加载用户绑定数据库"""
     try:
@@ -422,7 +476,7 @@ REGION_API_HOSTS = {
     'en': 'production-game-api.sekai.colorfulstage.com'
 }
 
-def process_and_save_data(region, uid, data_bytes):
+def process_and_save_data(region, uid, data_bytes, data_type='mysekai'):
     """处理并保存抓取的数据（解密、注入ID、保存）"""
     try:
         # 1. 解密
@@ -444,22 +498,25 @@ def process_and_save_data(region, uid, data_bytes):
         data['source'] = 'proxy_upload'
         data['local_source'] = 'proxy_upload'
 
-        # 注入用户 ID (如果数据中没有)
-        if 'updatedResources' in data:
+        # 注入用户 ID (仅 mysekai)
+        if data_type == 'mysekai' and 'updatedResources' in data:
             if 'userMysekaiGamedata' not in data['updatedResources']:
                 data['updatedResources']['userMysekaiGamedata'] = {}
-            # 始终确保 userId 存在且正确
             data['updatedResources']['userMysekaiGamedata']['userId'] = int(uid)
 
+        # Suite 数据展开 compact 字段
+        if data_type == 'suite':
+            data = process_suite_compact(data)
+
         # 3. 保存
-        save_dir = LUNABOT_DATA_BASE / region / 'mysekai'
+        save_dir = LUNABOT_DATA_BASE / region / data_type
         save_dir.mkdir(parents=True, exist_ok=True)
         save_path = save_dir / f'{uid}.json'
         
         with open(save_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
             
-        print(f"代理抓包成功: {region} user {uid} -> {save_path}")
+        print(f"代理抓包成功: {region} user {uid} ({data_type}) -> {save_path}")
         
     except Exception as e:
         print(f"处理代理数据时出错: {e}")
@@ -503,6 +560,10 @@ def proxy_upload(region, uid, data_type='mysekai'):
                 data['updatedResources']['userMysekaiGamedata']['userId'] = int(uid)
             
             # 保存文件
+            # Suite 数据展开 compact 字段
+            if data_type == 'suite':
+                data = process_suite_compact(data)
+            
             save_dir = LUNABOT_DATA_BASE / region / data_type
             save_dir.mkdir(parents=True, exist_ok=True)
             save_path = save_dir / f'{uid}.json'
@@ -561,7 +622,7 @@ def proxy_upload(region, uid, data_type='mysekai'):
         if resp.status_code == 200 and resp.content:
             # 异步处理（这里简单起见同步调用，以免多线程复杂化，
             # 如果文件很大影响延迟，可以考虑 threading.Thread）
-            process_and_save_data(region, uid, resp.content)
+            process_and_save_data(region, uid, resp.content, data_type)
             
         # 构造返回给客户端的响应
         response = app.make_response(resp.content)
@@ -975,6 +1036,10 @@ def upload(data_type):
             if 'userMysekaiGamedata' not in data['updatedResources']:
                 data['updatedResources']['userMysekaiGamedata'] = {}
             data['updatedResources']['userMysekaiGamedata']['userId'] = int(game_id)
+        
+        # Suite 数据展开 compact 字段
+        if data_type == 'suite':
+            data = process_suite_compact(data)
         
         # 创建保存目录（根据 data_type 创建子目录）
         save_dir = LUNABOT_DATA_BASE / region / data_type
