@@ -38,6 +38,10 @@ try:
 except AttributeError:
     pass
 CORS(app)
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB 请求大小限制
+
+# 允许的数据类型白名单（防止路径遍历）
+VALID_DATA_TYPES = ['suite', 'mysekai']
 
 # 支持的区服列表和对应的 sssekai 密钥名称
 VALID_REGIONS = ['jp', 'cn', 'tw', 'kr', 'en']
@@ -461,15 +465,18 @@ def process_and_save_data(region, uid, data_bytes):
         print(f"处理代理数据时出错: {e}")
 
 
-@app.route('/api/<region>/user/<uid>/upload/mysekai', methods=['GET', 'POST', 'PUT'])
-def proxy_upload(region, uid):
+@app.route('/api/<region>/user/<uid>/upload/<data_type>', methods=['GET', 'POST', 'PUT'])
+def proxy_upload(region, uid, data_type='mysekai'):
     """
     HTTP 代理接口：接收游戏客户端的请求，转发给官方服务器，并捕获响应数据
     也支持直接 POST 已解密的 JSON 数据 (用于 SekaiCatcher 等工具)
     """
     region = region.lower()
+    data_type = data_type.lower()
     if region not in REGION_API_HOSTS:
         return jsonify({'error': f'Unsupported region: {region}'}), 400
+    if data_type not in VALID_DATA_TYPES:
+        return jsonify({'error': f'Unsupported data type: {data_type}'}), 400
 
     # 检查是否是直接上传 JSON 数据 (Content-Type: application/json)
     content_type = request.headers.get('Content-Type', '')
@@ -496,14 +503,14 @@ def proxy_upload(region, uid):
                 data['updatedResources']['userMysekaiGamedata']['userId'] = int(uid)
             
             # 保存文件
-            save_dir = LUNABOT_DATA_BASE / region / 'mysekai'
+            save_dir = LUNABOT_DATA_BASE / region / data_type
             save_dir.mkdir(parents=True, exist_ok=True)
             save_path = save_dir / f'{uid}.json'
             
             with open(save_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             
-            print(f"直接上传成功: {region} user {uid} -> {save_path}")
+            print(f"直接上传成功: {region} user {uid} ({data_type}) -> {save_path}")
             
             return jsonify({
                 'success': True,
@@ -524,12 +531,16 @@ def proxy_upload(region, uid):
     
     # 从请求路径中提取真实 API 路径
     # 假设我们只代理 /mysekai 接口，所以可以直接构造
-    real_api_path = f"/api/user/{uid}/mysekai"
+    # 根据类型构建 API 路径
+    if data_type == 'suite':
+        real_api_path = f"/api/suite/user/{uid}"
+    else:
+        real_api_path = f"/api/user/{uid}/mysekai"
     
     target_url = f"https://{target_host}{real_api_path}"
     
-    # 转发请求 Headers (过滤掉一些可能引起问题的 headers)
-    excluded_headers = ['Host', 'Content-Length']
+    # 仅排除危险头，保留游戏客户端的认证头等必要信息
+    excluded_headers = {'Host', 'Content-Length', 'Cookie', 'Origin', 'Referer'}
     headers = {k: v for k, v in request.headers if k not in excluded_headers}
     headers['Host'] = target_host
     
@@ -540,7 +551,6 @@ def proxy_upload(region, uid):
             url=target_url,
             headers=headers,
             data=request.get_data(),
-            cookies=request.cookies,
             params=request.args,
             timeout=10,
             allow_redirects=False
@@ -885,13 +895,23 @@ exec ./"$BIN_NAME" -config "$CONFIG_NAME"
     # 返回流式响应，Content-Type 设为 shell script
     return Response(stream_with_context(generate()), mimetype='text/x-shellscript')
 
+# 允许下载的文件白名单
+ALLOWED_DOWNLOADS = ['Catcher-android-arm64', 'config-android.yaml']
+
 @app.route('/download/<filename>')
 def download_file(filename):
+    if filename not in ALLOWED_DOWNLOADS:
+        return jsonify({'error': '文件不存在'}), 404
     return send_from_directory('/root/bot/catcher/', filename)
 
 @app.route('/upload/<data_type>', methods=['POST'])
 def upload(data_type):
     """处理文件上传（支持 suite/mysekai 等类型）"""
+    # 校验数据类型
+    data_type = data_type.lower()
+    if data_type not in VALID_DATA_TYPES:
+        return jsonify({'error': f'不支持的数据类型: {data_type}'}), 400
+    
     # 检查是否有文件
     if 'file' not in request.files:
         return jsonify({'error': '没有上传文件'}), 400

@@ -22,6 +22,14 @@ android_proxy_ip: "127.0.0.1"
 # 调试模式 (打印更多日志)
 debug: false
 
+# ==================== 抓取控制 ====================
+# 是否抓取 Suite 数据
+capture_suite: true
+
+
+# 仅对游戏 API 域名执行 MITM (推荐开启，减少不必要的拦截)
+mitm_target_only: true
+
 # ==================== 证书配置 ====================
 # 如果你已经安装过 HarukiProxy 的证书，可以复用它
 # 这样就不需要重新安装证书
@@ -31,7 +39,6 @@ external_cert_path: "/data/local/tmp/harukiproxy/ca.pem"
 external_key_path: "/data/local/tmp/harukiproxy/ca.key"
 
 # 如果没有 HarukiProxy 证书，留空会自动生成新证书
-# 但需要手动安装到系统证书目录
 # external_cert_path: ""
 # external_key_path: ""
 

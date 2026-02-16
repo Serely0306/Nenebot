@@ -67,7 +67,7 @@ func main() {
 	up := uploader.NewUploader(cfg.UploadServer, cfg.SaveLocally, cfg.SaveDir)
 
 	// 创建代理
-	mitmProxy, err := proxy.NewMitmProxy(up, cfg.Debug, dataDir, cfg.ExternalCertPath, cfg.ExternalKeyPath)
+	mitmProxy, err := proxy.NewMitmProxy(up, cfg, dataDir)
 	if err != nil {
 		log.Fatalf("创建代理失败: %v", err)
 	}

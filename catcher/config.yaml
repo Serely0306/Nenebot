@@ -21,6 +21,21 @@ android_proxy_ip: ""
 # 调试模式 (打印更多日志)
 debug: false
 
+# ==================== 抓取控制 ====================
+# 是否抓取 MySekai 数据
+capture_mysekai: false
+
+# 是否抓取 Suite 数据
+capture_suite: true
+
+# 强制全量刷新 MySekai：将请求中的 isForceAllReloadOnlyMysekai=False 篡改为 True
+# 开启后每次进入 MySekai 页面都会获取完整数据（而不是仅第一次进入）
+# 开启此项会自动启用 capture_mysekai
+force_mysekai_reload: true
+
+# 仅对游戏 API 域名执行 MITM (推荐开启，减少不必要的拦截)
+mitm_target_only: true
+
 # ==================== 证书配置 (可选) ====================
 # 如果你想复用已安装的证书（如 HarukiProxy 的证书），可以设置以下路径
 # 留空则自动生成新证书（需要重新安装到系统）

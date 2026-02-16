@@ -54,3 +54,5 @@ haruki-tool/Haruki-Sekai-API/cn
 lunabot-latest
 lunabot/config/
 scripts/
+catcher/Catcher-android-arm64
+catcher/Catcher-android-arm64-test
