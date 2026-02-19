@@ -33,6 +33,7 @@ class RegionMasterDbSource:
     version_url: str
     version: str = DEFAULT_VERSION
     asset_version: str = DEFAULT_VERSION
+    data_version: str = DEFAULT_VERSION
 
     async def update_version(self):
         version = DEFAULT_VERSION
@@ -42,7 +43,12 @@ class RegionMasterDbSource:
             version = str(get_multi_keys(version_data, ['cdnVersion', 'data_version', 'dataVersion']))
             self.version = version
             self.asset_version = get_multi_keys(version_data, ['asset_version', 'assetVersion'])
-            # logger.info(f"MasterDB [{self.name}] 的版本为 {version}")
+            # 额外提取 dataVersion，用于 cdnVersion 相同时的辅助比对
+            try:
+                self.data_version = str(get_multi_keys(version_data, ['dataVersion', 'data_version']))
+            except KeyError:
+                self.data_version = DEFAULT_VERSION
+            # logger.info(f"MasterDB [{self.name}] 的版本为 {version}, dataVersion={self.data_version}")
         except asyncio.TimeoutError:
             logger.error(f"获取 MasterDB [{self.name}] 的版本信息超时")
         except Exception as e:
@@ -71,12 +77,16 @@ class RegionMasterDbManager:
         # logger.info(f"开始更新 {self.region} 的 {len(self.sources)} 个 MasterDB 的版本信息")
         last_version = self.latest_source.version if self.latest_source else DEFAULT_VERSION
         last_asset_version = self.latest_source.asset_version if self.latest_source else DEFAULT_VERSION
+        last_data_version = self.latest_source.data_version if self.latest_source else DEFAULT_VERSION
         await asyncio.gather(*[source.update_version() for source in self.sources])
         self.sources.sort(key=lambda x: get_version_order(x.version), reverse=True)
         self.latest_source = self.sources[0]
         self.version_update_time = datetime.now()
-        if last_version != DEFAULT_VERSION and last_version != self.latest_source.version:
-            logger.info(f"获取到最新版本的 MasterDB [{self.region}.{self.latest_source.name}] 版本为 {self.latest_source.version}")
+        # cdnVersion 变化 或 cdnVersion 相同但 dataVersion 变化 都触发通知
+        version_changed = last_version != self.latest_source.version
+        data_version_changed = (not version_changed and last_data_version != self.latest_source.data_version)
+        if last_version != DEFAULT_VERSION and (version_changed or data_version_changed):
+            logger.info(f"获取到最新版本的 MasterDB [{self.region}.{self.latest_source.name}] 版本为 {self.latest_source.version}, dataVersion={self.latest_source.data_version}")
             for hook in self._update_hooks:
                 asyncio.create_task(hook(
                     self.region, self.latest_source.name,
@@ -134,6 +144,7 @@ class MasterDataManager:
     def __init__(self, name: str, build_indices: Optional[bool] = None):
         self.name = name
         self.version = {}
+        self.data_version = {}
         self.data: Dict[str, Any] = {}
         self.update_hooks = []
         self.map_fn = {}
@@ -210,6 +221,9 @@ class MasterDataManager:
         versions = file_db.get_copy("master_data_cache_versions", {}).get(region, {})
         assert self.name in versions, "缓存版本无效"
         self.version[region] = versions[self.name]
+        # 加载缓存的 dataVersion
+        data_versions = file_db.get_copy("master_data_cache_data_versions", {}).get(region, {})
+        self.data_version[region] = data_versions.get(self.name, DEFAULT_VERSION)
         self.data[region] = await aload_json(cache_path)
         logger.info(f"MasterData [{region}.{self.name}] 从本地加载成功")
         map_fn = self.map_fn.get('all', self.map_fn.get(region))
@@ -242,6 +256,7 @@ class MasterDataManager:
             logger.warning(f"下载 MasterData [{region}.{self.name}] 超时")
             return
         self.version[region] = source.version
+        self.data_version[region] = source.data_version
 
         # 缓存到本地
         async with MASTERDATA_DB_LOCK:
@@ -250,6 +265,12 @@ class MasterDataManager:
                 versions[region] = {}
             versions[region][self.name] = self.version[region]
             file_db.set("master_data_cache_versions", versions)
+            # 保存 dataVersion
+            data_versions = file_db.get("master_data_cache_data_versions", {})
+            if region not in data_versions:
+                data_versions[region] = {}
+            data_versions[region][self.name] = self.data_version[region]
+            file_db.set("master_data_cache_data_versions", data_versions)
         await adump_json(self.data[region], cache_path)
         logger.info(f"MasterData [{region}.{self.name}] 更新成功")
 
@@ -285,7 +306,15 @@ class MasterDataManager:
             # 检查是否更新
             db_mgr = RegionMasterDbManager.get(region)
             source = await db_mgr.get_latest_source()
-            if get_version_order(self.version.get(region, DEFAULT_VERSION)) < get_version_order(source.version):
+            cached_cdn = get_version_order(self.version.get(region, DEFAULT_VERSION))
+            source_cdn = get_version_order(source.version)
+            need_update = cached_cdn < source_cdn
+            # cdnVersion 相同时，比对 dataVersion
+            if not need_update and cached_cdn == source_cdn:
+                cached_data = get_version_order(self.data_version.get(region, DEFAULT_VERSION))
+                source_data = get_version_order(source.data_version)
+                need_update = cached_data < source_data
+            if need_update:
                 await self._download_from_db(region, source)
             # 检查是否存在，如果仍然不存在则报错
             if self.data.get(region) is None:
