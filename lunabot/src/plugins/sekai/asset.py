@@ -314,6 +314,9 @@ class MasterDataManager:
                 cached_data = get_version_order(self.data_version.get(region, DEFAULT_VERSION))
                 source_data = get_version_order(source.data_version)
                 need_update = cached_data < source_data
+            # 无本地数据时强制下载（兼容 DEFAULT_VERSION 与 source 版本格式不一致的情况）
+            if self.data.get(region) is None:
+                need_update = True
             if need_update:
                 await self._download_from_db(region, source)
             # 检查是否存在，如果仍然不存在则报错
