@@ -714,10 +714,10 @@ def mysekai_help_android():
 
 Android 使用与 haruki-proxy 类似的原理，具体方法参考 haruki-proxy 教程
 将脚本替换成我所提供的内容
-脚本地址在/upload后替换为 /module/android/scripts
+脚本地址在/upload后替换为 /scripts
 ## 与harukiproxy不同之处
 1. 如果没有harukiproxy证书，注释掉config中指向harukiproxy证书的两行，安装catcher证书后需要重启虚拟机，可在完成2后一起重启
-2. 如果设置代理失败则需要手动设置代理，在设置中的Wifi处长按当前wifi，设置手动代理为127.0.0.1:8888，修改完后重启虚拟机
+2. 如果设置代理失败则需要手动设置代理，在设置中的Wifi处长按当前wifi，设置为手动代理，主机名设置为127.0.0.1,端口设置为8888，修改完后重启虚拟机
 ## 注意事项
 1. CA证书优先使用 haruki-proxy 所安装的证书
 2. 关闭进程请使用下面的脚本，仅关闭终端无法关闭进程
@@ -753,82 +753,7 @@ echo "完成！已停止进程并清除代理设置"
     return info, 200, {'Content-Type': 'text/plain; charset=utf-8'}
 
 
-# ==================== 旧版模块接口 (保留兼容) ====================
-
-@app.route('/module/ios', methods=['GET'])
-def generate_ios_module():
-    """生成 iOS (Surge/Loon) 模块配置 - 旧版兼容"""
-    host = request.headers.get('Host')
-    
-    template = f"""#!name=MySekai Upload Helper
-#!desc=自动抓取 MySekai 数据并上传到 LunaBot 本地服务器 ({host})
-#!author=Nene-LunaBot
-#!system=ios
-#!redirect=3
-#!mitm=3
-#!total=6
-#按需修改配置注释
-[URL Rewrite]
-# 日服
-# ^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai\\=(True|False)$ http://{host}/api/jp/user/$1/upload/mysekai 307
-# ^https:\\/\\/submit\\.backtrace\\.io\\/  reject
-# 国服
-^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai\\=(True|False)$ http://{host}/api/cn/user/$1/upload/mysekai 307
-^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai\\=(True|False)$ http://{host}/api/cn/user/$1/upload/mysekai 307
-^https:\\/\\/submit\\.backtrace\\.io\\/  reject
-
-[MITM]
-# hostname=%APPEND% production-game-api.sekai.colorfulpalette.org, submit.backtrace.io
-hostname=%APPEND% mkcn-prod-public-60001-1.dailygn.com, mkcn-prod-public-60001-2.dailygn.com, submit.backtrace.io
-
-"""
-    return template, 200, {'Content-Type': 'text/plain; charset=utf-8'}
-
-@app.route('/module/android', methods=['GET'])
-def generate_android_config():
-    """生成 Android (HttpCanary/Postern) 参考配置"""
-    host = request.headers.get('Host')
-    
-    info = f"""# Android 抓包上传配置指南
-
-Android 使用与 haruki-proxy 类似的原理，具体方法参考 haruki-proxy 教程
-将脚本替换成我所提供的内容
-脚本地址在当前网址后加上 /scripts
-## 与harukiproxy不同之处
-1. 如果没有harukiproxy证书，注释掉config中指向harukiproxy证书的两行，安装catcher证书后需要重启虚拟机，可在完成2后一起重启
-2. 需要手动设置代理，在设置中的Wifi处长按当前wifi，设置手动代理为127.0.0.1:8888，修改完后重启虚拟机
-## 注意事项
-1. CA证书优先使用 haruki-proxy 所安装的证书
-2. 关闭进程请使用下面的脚本，仅关闭终端无法关闭进程
-
-#!/bin/sh
-# 停止 Catcher 并清理代理设置
-
-# 获取 Root 权限
-if [ "$(id -u)" -ne 0 ]; then
-    if command -v su >/dev/null 2>&1; then
-        exec su -c "$0 $*"
-    else
-        echo "此脚本需要 Root 权限运行" >&2
-        exit 1
-    fi
-fi
-
-echo "正在停止 Catcher..."
-
-# 停止进程
-pkill -f "Catcher-android-arm64" 2>/dev/null
-pkill -f "catcher" 2>/dev/null
-
-# 清除代理设置
-settings put global http_proxy :0 2>/dev/null
-settings put global https_proxy :0 2>/dev/null
-
-echo "完成！已停止进程并清除代理设置"
-"""
-    return info, 200, {'Content-Type': 'text/plain; charset=utf-8'}
-
-@app.route('/module/android/scripts', methods=['GET'])
+@app.route('/scripts', methods=['GET'])
 def generate_android_scripts_config():
     """
     生成 Android 自动部署脚本 (流式响应)
@@ -876,14 +801,7 @@ CONFIG_NAME="config-android.yaml"
 """
         yield f'CONFIG_URL="http://{host}/upload/download/$CONFIG_NAME"\n\n'
 
-        yield """# 默认留空自动生成新证书
-EXTERNAL_CERT_PATH=""
-EXTERNAL_KEY_PATH=""
-
-# 外部证书路径 (如果使用过HarukiProxy服务则去掉注释使用 HarukiProxy 的证书)
-# EXTERNAL_CERT_PATH="/data/local/tmp/harukiproxy/ca.pem"
-# EXTERNAL_KEY_PATH="/data/local/tmp/harukiproxy/ca.key"
-
+        yield """
 # ============================================================
 # 脚本逻辑
 # ============================================================

@@ -34,12 +34,9 @@ mitm_target_only: true
 # 如果你已经安装过 HarukiProxy 的证书，可以复用它
 # 这样就不需要重新安装证书
 
-# HarukiProxy 证书路径 (如果有)
-external_cert_path: "/data/local/tmp/harukiproxy/ca.pem"
-external_key_path: "/data/local/tmp/harukiproxy/ca.key"
+# HarukiProxy 证书路径 (如果有，若有不同自行修改)
+#external_cert_path: "/data/local/tmp/harukiproxy/ca.pem"
+#external_key_path: "/data/local/tmp/harukiproxy/ca.key"
 
-# 如果没有 HarukiProxy 证书，留空会自动生成新证书
-# external_cert_path: ""
-# external_key_path: ""
 
 
