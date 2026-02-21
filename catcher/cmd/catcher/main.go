@@ -75,8 +75,15 @@ func main() {
 	// Android 特定操作
 	if androidHelper.IsAndroid() && androidHelper.IsRoot() {
 		// 安装 CA 证书
-		if err := androidHelper.InstallCert(mitmProxy.GetCertPath()); err != nil {
+		installed, err := androidHelper.InstallCert(mitmProxy.GetCertPath())
+		if err != nil {
 			log.Printf("[警告] 安装证书失败: %v", err)
+		} else if installed {
+			// 新安装了证书，需要重启设备才能生效
+			if err := androidHelper.Reboot(); err != nil {
+				log.Printf("[警告] 自动重启失败: %v，请手动重启设备", err)
+			}
+			os.Exit(0)
 		}
 
 		// 获取代理 IP

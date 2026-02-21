@@ -1,6 +1,11 @@
 package android
 
 import (
+	"crypto/md5"
+	"crypto/x509"
+	"encoding/asn1"
+	"encoding/binary"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"os"
@@ -70,44 +75,91 @@ func (h *AndroidHelper) ClearProxy() error {
 	return nil
 }
 
+// subjectHashOld 计算证书的 subject_hash_old (等价于 openssl x509 -subject_hash_old)
+// Android 系统证书目录使用此哈希作为文件名
+func subjectHashOld(cert *x509.Certificate) (string, error) {
+	// subject_hash_old 使用 DER 编码的 Subject 的 MD5 哈希的前 4 字节 (小端序)
+	subjectDER, err := asn1.Marshal(cert.Subject.ToRDNSequence())
+	if err != nil {
+		return "", fmt.Errorf("编码证书主题失败: %w", err)
+	}
+
+	hash := md5.Sum(subjectDER)
+	// 取前 4 字节，按小端序读取为 uint32
+	hashValue := binary.LittleEndian.Uint32(hash[:4])
+	return fmt.Sprintf("%08x", hashValue), nil
+}
+
 // InstallCert 安装 CA 证书到系统证书目录
-func (h *AndroidHelper) InstallCert(certPath string) error {
+// 返回: installed=true 表示新安装了证书（需要重启生效）, false 表示已存在
+func (h *AndroidHelper) InstallCert(certPath string) (bool, error) {
 	if !h.IsRoot() {
-		return fmt.Errorf("需要 Root 权限")
+		return false, fmt.Errorf("需要 Root 权限")
 	}
 
 	// 读取证书内容
 	certData, err := os.ReadFile(certPath)
 	if err != nil {
-		return fmt.Errorf("读取证书失败: %w", err)
+		return false, fmt.Errorf("读取证书失败: %w", err)
 	}
 
-	// 计算证书哈希 (用于文件名)
-	// Android 使用 subject_hash_old 格式
-	// 这里简化处理，使用固定名称
-	certName := "lunabot-catcher.0"
+	// 解析 PEM 证书
+	block, _ := pem.Decode(certData)
+	if block == nil {
+		return false, fmt.Errorf("无效的 PEM 证书文件")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false, fmt.Errorf("解析证书失败: %w", err)
+	}
+
+	// 计算 subject_hash_old 作为文件名
+	hashStr, err := subjectHashOld(cert)
+	if err != nil {
+		return false, fmt.Errorf("计算证书哈希失败: %w", err)
+	}
+	certName := hashStr + ".0"
 
 	// 系统证书目录
 	systemCertDir := "/system/etc/security/cacerts"
 	destPath := filepath.Join(systemCertDir, certName)
 
-	// 检查证书是否已安装
+	// 检查证书是否已安装 (用正确哈希名)
 	if _, err := os.Stat(destPath); err == nil {
-		fmt.Println("[Android] CA 证书已安装")
-		return nil
+		fmt.Printf("[Android] CA 证书已安装: %s\n", destPath)
+		return false, nil
 	}
 
 	// 重新挂载 /system 为可写
 	if err := h.remountSystem(); err != nil {
-		return fmt.Errorf("挂载系统分区失败: %w", err)
+		return false, fmt.Errorf("挂载系统分区失败: %w", err)
 	}
 
-	// 写入证书
+	// 清理旧的错误命名的证书 (之前用的固定名)
+	oldPath := filepath.Join(systemCertDir, "lunabot-catcher.0")
+	if _, err := os.Stat(oldPath); err == nil {
+		os.Remove(oldPath)
+		fmt.Println("[Android] 已清理旧证书: lunabot-catcher.0")
+	}
+
+	// 写入证书 (使用正确的哈希文件名)
 	if err := os.WriteFile(destPath, certData, 0644); err != nil {
-		return fmt.Errorf("写入证书失败: %w", err)
+		return false, fmt.Errorf("写入证书失败: %w", err)
 	}
 
-	fmt.Printf("[Android] CA 证书已安装到: %s\n", destPath)
+	fmt.Printf("[Android] CA 证书已安装: %s (hash: %s)\n", destPath, hashStr)
+	return true, nil
+}
+
+// Reboot 重启设备
+func (h *AndroidHelper) Reboot() error {
+	fmt.Println("[Android] 证书已安装，3 秒后自动重启设备...")
+	// 给用户一个反应时间
+	cmd := exec.Command("sh", "-c", "sleep 3 && reboot")
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("重启失败: %w", err)
+	}
 	return nil
 }
 
