@@ -44,10 +44,13 @@ func (h *AndroidHelper) IsRoot() bool {
 //		return nil
 //	}
 func (h *AndroidHelper) SetProxy(host string, port int) error {
+	su2Path := "/data/user/0/bin.mt.plus/files/term/bin/su2"
 	proxyStr := fmt.Sprintf("%s:%d", host, port)
-	cmdStr := fmt.Sprintf("/system/bin/settings put --user 0 global http_proxy %s", proxyStr)
 
-	cmd := exec.Command("su2", "-c", cmdStr) // 关键：su2 -c
+	// 用 sh 来执行 su2 脚本，避免 exec format error
+	cmd := exec.Command("/system/bin/sh", su2Path,
+		"-c", "/system/bin/settings", "put", "global", "http_proxy", proxyStr,
+	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("设置代理失败: err=%v, out=%s", err, string(out))
