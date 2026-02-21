@@ -717,7 +717,7 @@ Android 使用与 haruki-proxy 类似的原理，具体方法参考 haruki-proxy
 脚本地址在/upload后替换为 /module/android/scripts
 ## 与harukiproxy不同之处
 1. 如果没有harukiproxy证书，注释掉config中指向harukiproxy证书的两行，安装catcher证书后需要重启虚拟机，可在完成2后一起重启
-2. 需要手动设置代理，在设置中的Wifi处长按当前wifi，设置手动代理为127.0.0.1:8888，修改完后重启虚拟机
+2. 如果设置代理失败则需要手动设置代理，在设置中的Wifi处长按当前wifi，设置手动代理为127.0.0.1:8888，修改完后重启虚拟机
 ## 注意事项
 1. CA证书优先使用 haruki-proxy 所安装的证书
 2. 关闭进程请使用下面的脚本，仅关闭终端无法关闭进程
@@ -869,12 +869,12 @@ ROOT_DIR="/data/local/tmp/catcher"
 # 可执行文件名和下载地址
 BIN_NAME="Catcher-android-arm64"
 """
-        yield f'BIN_URL="http://{host}/mysekai_upload/download/$BIN_NAME"\n\n'
+        yield f'BIN_URL="http://{host}/upload/download/$BIN_NAME"\n\n'
         
         yield """# 配置文件名和下载地址
 CONFIG_NAME="config-android.yaml"
 """
-        yield f'CONFIG_URL="http://{host}/mysekai_upload/download/$CONFIG_NAME"\n\n'
+        yield f'CONFIG_URL="http://{host}/upload/download/$CONFIG_NAME"\n\n'
 
         yield """# 默认留空自动生成新证书
 EXTERNAL_CERT_PATH=""

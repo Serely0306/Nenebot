@@ -32,14 +32,26 @@ func (h *AndroidHelper) IsRoot() bool {
 }
 
 // SetProxy 设置系统 HTTP 代理
+//
+//	func (h *AndroidHelper) SetProxy(host string, port int) error {
+//		proxyStr := fmt.Sprintf("%s:%d", host, port)
+//		cmd := exec.Command("settings", "put", "global", "http_proxy", proxyStr)
+//		output, err := cmd.CombinedOutput()
+//		if err != nil {
+//			return fmt.Errorf("设置代理失败: %s", string(output))
+//		}
+//		fmt.Printf("[Android] 已设置代理: %s\n", proxyStr)
+//		return nil
+//	}
 func (h *AndroidHelper) SetProxy(host string, port int) error {
 	proxyStr := fmt.Sprintf("%s:%d", host, port)
-	cmd := exec.Command("settings", "put", "global", "http_proxy", proxyStr)
-	output, err := cmd.CombinedOutput()
+	cmdStr := fmt.Sprintf("/system/bin/settings put --user 0 global http_proxy %s", proxyStr)
+
+	cmd := exec.Command("su2", "-c", cmdStr) // 关键：su2 -c
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("设置代理失败: %s", string(output))
+		return fmt.Errorf("设置代理失败: err=%v, out=%s", err, string(out))
 	}
-	fmt.Printf("[Android] 已设置代理: %s\n", proxyStr)
 	return nil
 }
 
