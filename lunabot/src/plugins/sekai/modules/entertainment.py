@@ -448,7 +448,7 @@ async def start_guess(ctx: SekaiHandlerContext, guess_type: str, timeout: timede
         try:
             from ...memory_optimizer import perform_memory_trim
             # 在进程池中执行以避免阻塞事件循环
-            await run_in_pool(perform_memory_trim, True)
+            await perform_memory_trim(quiet=True)
         except Exception as e:
             logger.warning(f"触发内存整理失败: {e}")
 # 随机裁剪图片到 w=[w*rate_min, w*rate_max], h=[h*rate_min, h*rate_max]

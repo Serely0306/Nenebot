@@ -212,9 +212,9 @@ def draw_plot(gid, date_str, ax, recs, interval, topk_user, topk_name):
 
     ax.xaxis.set_major_locator(mdates.HourLocator(interval=1))
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%H'))
-    plt.xticks(fontsize=8)
-    plt.yticks(fontsize=8)
-    plt.legend(fontsize=8)
+    plt.xticks(fontsize=8, fontproperties=_fp)
+    plt.yticks(fontsize=8, fontproperties=_fp)
+    plt.legend(fontsize=8, prop=_fp)
 
 last_userwords = []
 jieba_inited = False
@@ -439,11 +439,11 @@ def draw_date_count_plot(dates, counts, path, user_counts=None):
         plt.bar(dates, user_counts, label='用户消息数', color='#dddddd', width=1)
     plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%m%d'))
-    plt.xlabel('日期')
-    plt.ylabel('消息总数')
-    plt.xticks(fontsize=8)
-    plt.yticks(fontsize=8)
-    plt.legend(fontsize=8)
+    plt.xlabel('日期', fontproperties=_fp)
+    plt.ylabel('消息总数', fontproperties=_fp)
+    plt.xticks(fontsize=8, fontproperties=_fp)
+    plt.yticks(fontsize=8, fontproperties=_fp)
+    plt.legend(fontsize=8, prop=_fp)
     plt.savefig(path)
     plt.close()
     logger.info(f"绘制完成")
@@ -464,7 +464,8 @@ def draw_word_count_plot(dates, topk_user, topk_name, user_counts, user_date_cou
     topk_user_count += [sum([user_counts[user_id] for user_id in other_users])]
     labels = [f'{topk_name[i]} ({topk_user_count[i]})' for i in range(k)]
     labels += [f'其他 ({topk_user_count[k]})']
-    ax1.pie(topk_user_count, labels=labels, autopct='%1.1f%%', shadow=False, startangle=90)
+    ax1.pie(topk_user_count, labels=labels, autopct='%1.1f%%', shadow=False, startangle=90,
+            textprops={'fontproperties': _fp})
 
     date_topk_count = [[user_date_counts[i][user_id] for i in range(n)] for user_id in topk_user]
     date_topk_count += [[sum([user_date_counts[i][user_id] for user_id in other_users]) for i in range(n)]]
@@ -475,11 +476,11 @@ def draw_word_count_plot(dates, topk_user, topk_name, user_counts, user_date_cou
     ax2.bar(dates, date_topk_count[k], label='其他', bottom=bottom, width=1)
     ax2.xaxis.set_major_locator(mdates.AutoDateLocator())
     ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m%d'))
-    ax2.legend(fontsize=8)
-    ax2.set_xlabel('日期')
-    ax2.set_ylabel(f'消息数')
-    plt.xticks(fontsize=8)
-    plt.yticks(fontsize=8)
+    ax2.legend(fontsize=8, prop=_fp)
+    ax2.set_xlabel('日期', fontproperties=_fp)
+    ax2.set_ylabel(f'消息数', fontproperties=_fp)
+    plt.xticks(fontsize=8, fontproperties=_fp)
+    plt.yticks(fontsize=8, fontproperties=_fp)
     plt.tight_layout()
     plt.savefig(path)
     plt.close()
@@ -519,5 +520,5 @@ def draw_long_sta_date_count_plot(gid, date_str, ax: plt.Axes, topk_user, topk_n
 
     ax.xaxis.set_major_locator(mdates.AutoDateLocator())
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m%d'))
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=8, prop=_fp)
 

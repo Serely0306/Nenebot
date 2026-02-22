@@ -56,3 +56,4 @@ lunabot/config/
 scripts/
 catcher/Catcher-android-arm64
 catcher/Catcher-android-arm64-test
+catcher/config-android.yaml

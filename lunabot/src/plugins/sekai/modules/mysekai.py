@@ -154,11 +154,30 @@ async def get_mysekai_info(
         except HttpError as e:
             logger.info(f"获取 {qid} {ctx.region} mysekai抓包数据失败: {get_exc_desc(e)}")
             if e.status_code == 404:
-                local_err = e.message.get('local_err', None)
-                haruki_err = e.message.get('haruki_err', None)
+                local_err = None
+                haruki_err = None
+                extra_msg = None
+                detail = e.message
+                if isinstance(detail, dict):
+                    local_err = detail.get('local_err')
+                    haruki_err = detail.get('haruki_err')
+                    extra_msg = detail.get('message')
+                else:
+                    try:
+                        detail_json = loads_json(detail)
+                    except Exception:
+                        detail_json = None
+                    if isinstance(detail_json, dict):
+                        local_err = detail_json.get('local_err')
+                        haruki_err = detail_json.get('haruki_err')
+                        extra_msg = detail_json.get('message')
+                    else:
+                        extra_msg = str(detail)
                 msg = f"获取你的{get_region_name(ctx.region)}Mysekai抓包数据失败，发送\"/抓包\"指令可获取帮助\n"
                 if local_err is not None: msg += f"[本地数据] {local_err}\n"
                 if haruki_err is not None: msg += f"[Haruki工具箱] {haruki_err}\n"
+                if extra_msg and local_err is None and haruki_err is None:
+                    msg += f"[服务返回] {extra_msg}\n"
                 raise ReplyException(msg.strip())
             else:
                 raise e

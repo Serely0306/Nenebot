@@ -359,7 +359,7 @@ def get_suite_data(region, uid):
     # 辅助函数：获取 haruki 数据
     def get_haruki_data():
         nonlocal haruki_err
-        haruki_url = f"https://suite-api.haruki.seiunx.com/public/{region}/suite/{uid}"
+        haruki_url = f"https://toolbox-api-direct.haruki.seiunx.com/public/{region}/suite/{uid}"
         if filter_keys:
             haruki_url += f"?key={','.join(filter_keys)}"
         try:
@@ -367,10 +367,16 @@ def get_suite_data(region, uid):
             if resp.ok:
                 data = resp.json()
                 if data is not None:
+                    data['source'] = 'Haruki ToolBox'
                     return data
                 haruki_err = '返回数据为空'
                 return None
-            haruki_err = f"HTTP {resp.status_code}"
+            if resp.status_code == 404:
+                haruki_err = '请检查是否已绑定Haruki工具箱并上传数据'
+            elif resp.status_code == 403:
+                haruki_err = '请在Haruki工具箱中设置允许公开API访问'
+            else:
+                haruki_err = f"HTTP {resp.status_code}"
             return None
         except Exception as e:
             haruki_err = str(e)
