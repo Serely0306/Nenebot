@@ -907,16 +907,19 @@ def upload(data_type):
     
     # 获取参数
     region = request.form.get('region', 'jp').lower()
-    game_id = request.form.get('game_id', '').strip()
     
     if region not in VALID_REGIONS:
         return jsonify({'error': f'不支持的区服: {region}'}), 400
     
-    if not game_id:
-        return jsonify({'error': '请选择要上传数据的游戏账号'}), 400
-    
-    if not game_id.isdigit():
-        return jsonify({'error': '游戏 ID 格式不正确'}), 400
+    # mysekai 仍需要前端传入 game_id
+    if data_type != 'suite':
+        game_id = request.form.get('game_id', '').strip()
+        if not game_id:
+            return jsonify({'error': '请选择要上传数据的游戏账号'}), 400
+        if not game_id.isdigit():
+            return jsonify({'error': '游戏 ID 格式不正确'}), 400
+    else:
+        game_id = None  # suite 将从 JSON 数据中提取
     
     try:
         # 读取文件内容
@@ -946,6 +949,29 @@ def upload(data_type):
                 data = convert_to_serializable(data)  # 转换为 JSON 可序列化格式
             except Exception as e:
                 return jsonify({'error': f'二进制文件解密失败: {str(e)}'}), 400
+        
+        # Suite 类型：从数据中提取 userId
+        if data_type == 'suite':
+            game_id = _extract_suite_user_id(data)
+            if not game_id:
+                return jsonify({
+                    'error': '上传失败：无法从文件中提取用户ID。请确保上传的是完整的 Suite 抓包数据文件（包含 userGamedata 字段）'
+                }), 400
+            
+            # 检查该游戏 ID 是否已在 bot 中绑定
+            db = load_profile_db()
+            region_binds = db.get("bind_list", {}).get(region, {})
+            is_bound = False
+            for qq_id, bound_ids in region_binds.items():
+                if isinstance(bound_ids, str):
+                    bound_ids = [bound_ids]
+                if game_id in [str(bid) for bid in bound_ids]:
+                    is_bound = True
+                    break
+            if not is_bound:
+                return jsonify({
+                    'error': f'上传失败：游戏ID {mask_game_id(game_id)} 尚未在 Bot 中绑定。请先在 Nene-LunaBot 中使用绑定指令绑定你的游戏账号'
+                }), 400
         
         # 添加 upload_time 字段（如果不存在）
         if 'upload_time' not in data:
@@ -992,6 +1018,43 @@ def upload(data_type):
         return jsonify({'error': f'JSON 解析错误: {str(e)}'}), 400
     except Exception as e:
         return jsonify({'error': f'处理文件时出错: {str(e)}'}), 500
+
+
+def _extract_suite_user_id(data: dict) -> str:
+    """从 suite 数据中提取用户 ID
+    
+    搜索顺序:
+    1. userGamedata (展开后的格式) -> 列表中的 userId
+    2. compactUserGamedata (compact 格式) -> userId 数组的第一个元素
+    3. 顶层 userId 字段
+    """
+    if not isinstance(data, dict):
+        return None
+    
+    # 1. 已展开的 userGamedata
+    user_gamedata = data.get('userGamedata')
+    if isinstance(user_gamedata, list) and len(user_gamedata) > 0:
+        uid = user_gamedata[0].get('userId') if isinstance(user_gamedata[0], dict) else None
+        if uid is not None:
+            return str(uid)
+    elif isinstance(user_gamedata, dict):
+        uid = user_gamedata.get('userId')
+        if uid is not None:
+            return str(uid)
+    
+    # 2. compact 格式的 userGamedata
+    compact_gamedata = data.get('compactUserGamedata')
+    if isinstance(compact_gamedata, dict):
+        user_ids = compact_gamedata.get('userId')
+        if isinstance(user_ids, list) and len(user_ids) > 0:
+            return str(user_ids[0])
+    
+    # 3. 顶层 userId
+    uid = data.get('userId')
+    if uid is not None:
+        return str(uid)
+    
+    return None
 
 
 @app.route('/status', methods=['GET'])

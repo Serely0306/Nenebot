@@ -17,11 +17,11 @@
                 <p class="subtitle">上传你的 Suite 抓包数据到 Nene-LunaBot</p>
             </div>
 
-            <!-- 步骤 1: 选择区服和输入 QQ -->
+            <!-- 步骤 1: 选择区服 -->
             <div id="step1" class="step">
                 <div class="step-header">
                     <span class="step-number">1</span>
-                    <span class="step-title">选择区服并查询绑定账号</span>
+                    <span class="step-title">选择区服</span>
                 </div>
 
                 <div class="form-group">
@@ -36,43 +36,19 @@
                         -->
                     </select>
                 </div>
-
-                <div class="form-group">
-                    <label for="qqId">你的 QQ 号</label>
-                    <input type="text" id="qqId" class="input" placeholder="请输入你在 Nene-LunaBot 绑定账号时使用的 QQ 号">
-                </div>
-
-                <button class="btn-query" id="queryBtn">
-                    <span class="btn-text">查询绑定账号</span>
-                    <span class="btn-icon">🔍</span>
-                </button>
-
-                <div class="query-result" id="queryResult" style="display: none;"></div>
             </div>
 
-            <!-- 步骤 2: 选择账号 -->
-            <div id="step2" class="step" style="display: none;">
+            <!-- 步骤 2: 上传文件 -->
+            <div id="step2" class="step">
                 <div class="step-header">
                     <span class="step-number">2</span>
-                    <span class="step-title">选择要上传数据的账号</span>
-                </div>
-
-                <div class="accounts-list" id="accountsList"></div>
-            </div>
-
-            <!-- 步骤 3: 上传文件 -->
-            <div id="step3" class="step" style="display: none;">
-                <div class="step-header">
-                    <span class="step-number">3</span>
                     <span class="step-title">上传 Suite 数据文件</span>
                 </div>
-
-                <div class="selected-account-info" id="selectedAccountInfo"></div>
 
                 <div class="upload-area" id="uploadArea">
                     <div class="upload-icon">📁</div>
                     <p class="upload-text">拖拽文件到此处，或点击选择文件</p>
-                    <p class="upload-hint">请上传抓到的suite文件</p>
+                    <p class="upload-hint">请上传抓到的 Suite 文件，系统将自动从文件中识别用户ID</p>
                     <input type="file" id="fileInput" accept=".json,.bin,application/json,application/octet-stream"
                         hidden>
                 </div>
@@ -101,14 +77,14 @@
             <div class="help-section">
                 <h3>📖 使用说明</h3>
                 <ol>
-                    <li>选择你的游戏区服，输入你在 Nene-LunaBot 绑定时使用的 QQ 号</li>
-                    <li>点击查询后，选择你要上传数据的游戏账号</li>
+                    <li>选择你的游戏区服</li>
                     <li>上传抓包得到的 Suite 数据文件(二者均可)：
                         <ul style="margin-top: 6px; color: var(--text-muted);">
                             <li><strong>二进制文件</strong> - 抓包得到的原始数据</li>
                             <li><strong>.json 文件</strong> - 已解密的 JSON 数据</li>
                         </ul>
                     </li>
+                    <li>系统将自动从文件中识别你的游戏账号ID并保存数据</li>
                     <li>上传成功后，可在 Nene-LunaBot 中使用相关功能</li>
                 </ol>
             </div>
@@ -129,15 +105,16 @@
         </div>
 
         <footer class="footer">
-            <p>Nene-LunaBot Suite Upload Service v2.0</p>
+            <p>Nene-LunaBot Suite Upload Service v2.1</p>
         </footer>
     </div>
 
-    <script src="script.js"></script>
     <script>
-        // 覆盖默认的上传类型为 suite
+        // Suite 直接上传模式（不需要查询绑定账号）
         window.UPLOAD_DATA_TYPE = 'suite';
+        window.UPLOAD_MODE = 'direct';
     </script>
+    <script src="script.js"></script>
 </body>
 
 </html>
