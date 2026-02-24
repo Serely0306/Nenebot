@@ -103,16 +103,6 @@ func (wss *WsServer) readLoop(ctx context.Context, readChan chan WsMsg) {
 						groupId, _ := debugMsg["group_id"].(float64)
 						log.Printf("[OneBot] Event: post_type=%s msg_type=%s sub_type=%s group=%d user=%d\n",
 							postType, msgType, subType, int64(groupId), int64(userId))
-
-						// 从事件中的 self_id 校验/更新 BotId（解决无配置时 NapCat 登录阶段发错误 ID 的问题）
-						if eventSelfId, ok := debugMsg["self_id"].(float64); ok {
-							eventBotId := fmt.Sprintf("%d", int64(eventSelfId))
-							if eventBotId != "0" && eventBotId != wss.BotId {
-								log.Printf("从事件中检测到 BotID 变更 (%s -> %s)，正在更新并重置下游连接...\n", wss.BotId, eventBotId)
-								wss.BotId = eventBotId
-								wss.DisconnectAllClients()
-							}
-						}
 					} else if echo, ok := debugMsg["echo"].(string); ok {
 						// 是API响应
 						log.Printf("[OneBot] ApiResp: echo=%s retcode=%v\n", echo, debugMsg["retcode"])
