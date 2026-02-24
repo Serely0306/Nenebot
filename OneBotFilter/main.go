@@ -16,7 +16,8 @@ var (
 	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
-	wss = &filter.WsServer{}
+	wss         = &filter.WsServer{}
+	configBotId string // 保存配置文件中的原始 BotId，不被自动检测覆盖
 )
 
 // checkAccessToken 验证连接的access-token
@@ -147,16 +148,22 @@ func handleLocal(w http.ResponseWriter, r *http.Request) {
 	// defer conn.Close()
 	wss.Conn = conn
 
-	// 自动从NapCat/LLBot的请求头中获取bot ID
+	// 确定 Bot ID：配置文件中的 bot-id 优先，否则从 NapCat 请求头自动检测
 	var newBotId string
 	selfId := strings.TrimSpace(r.Header.Get("X-Self-ID"))
 
-	if selfId != "" {
+	if configBotId != "" {
+		// 配置文件明确指定了 bot-id，始终使用它（忽略 NapCat 可能发来的错误 ID）
+		newBotId = configBotId
+		if selfId != "" && selfId != configBotId {
+			log.Printf("注意：NapCat 发送的 X-Self-ID (%s) 与配置的 bot-id (%s) 不同，使用配置值\n", selfId, configBotId)
+		} else {
+			log.Printf("使用配置中的Bot ID: %s\n", newBotId)
+		}
+	} else if selfId != "" {
+		// 未配置 bot-id，从 NapCat 自动检测
 		newBotId = selfId
 		log.Printf("已自动识别Bot ID: %s\n", selfId)
-	} else if filter.CONFIG.Server.BotId != "" {
-		newBotId = filter.CONFIG.Server.BotId
-		log.Printf("使用配置中的Bot ID: %s\n", newBotId)
 	} else {
 		log.Println("警告：未能获取Bot ID，请在config.yaml中配置bot-id")
 	}
@@ -169,7 +176,6 @@ func handleLocal(w http.ResponseWriter, r *http.Request) {
 			wss.DisconnectAllClients()
 		}
 		wss.BotId = newBotId
-		filter.CONFIG.Server.BotId = newBotId
 	}
 
 	log.Println("已连接到OneBot客户端")
@@ -186,6 +192,7 @@ func main() {
 	if err != nil {
 		log.Fatal("加载配置异常:", err)
 	}
+	configBotId = strings.TrimSpace(filter.CONFIG.Server.BotId) // 保存配置中的原始 BotId
 	upgrader.ReadBufferSize = filter.CONFIG.Server.BufferSize
 	upgrader.WriteBufferSize = filter.CONFIG.Server.BufferSize
 	http.HandleFunc(filter.CONFIG.Server.Suffix, handleLocal)

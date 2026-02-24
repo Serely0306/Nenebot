@@ -970,7 +970,7 @@ def upload(data_type):
                     break
             if not is_bound:
                 return jsonify({
-                    'error': f'上传失败：游戏ID {mask_game_id(game_id)} 尚未在 Bot 中绑定。请先在 Nene-LunaBot 中使用绑定指令绑定你的游戏账号'
+                    'error': f'上传失败：游戏ID {mask_game_id(game_id)} 尚未在 Bot 中绑定。请先在bot中使用绑定指令绑定你的游戏账号'
                 }), 400
         
         # 添加 upload_time 字段（如果不存在）

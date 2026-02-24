@@ -15,25 +15,28 @@ type WsServer struct {
 	Conn      *websocket.Conn
 	WsClients []*WsClient
 	BotId     string     // 从OneBot客户端连接中自动获取的bot ID
-	readChan  chan WsMsg //从OneBot客户端读取到的消息
-	writeChan chan WsMsg //写入到OneBot客户端的消息
+	readChan  chan WsMsg //从OneBot客户端读取到的消息（当前活跃连接的）
+	writeChan chan WsMsg //写入到OneBot客户端的消息（当前活跃连接的）
 	// mutex     sync.Mutex
 }
 
 // 处理与OneBot客户端的连接
 func (wss *WsServer) WsServerHandler() error {
 	ctx, ctxCancel := context.WithCancel(context.Background())
-	wss.readChan = make(chan WsMsg, 128)
-	wss.writeChan = make(chan WsMsg, 128)
-	go wss.readLoop(ctx)       //开启读取OneBot客户端消息协程
-	go wss.writeLoop(ctx)      //开启写入OneBot客户端消息携程
-	defer wss.close(ctxCancel) //注册关闭方法
+	// 使用局部 channel，避免旧连接的 defer close 关闭新连接的 channel
+	readChan := make(chan WsMsg, 128)
+	writeChan := make(chan WsMsg, 128)
+	wss.readChan = readChan
+	wss.writeChan = writeChan
+	go wss.readLoop(ctx, readChan)                  //开启读取OneBot客户端消息协程
+	go wss.writeLoop(ctx, writeChan)                //开启写入OneBot客户端消息携程
+	defer wss.close(ctxCancel, readChan, writeChan) //注册关闭方法，传入当前 channel
 	for {
 		mt, msg, err := wss.Conn.ReadMessage()
 		if err != nil {
 			return err
 		}
-		wss.readChan <- WsMsg{mt, msg}
+		readChan <- WsMsg{mt, msg}
 	}
 	// return errors.New("读取消息循环已结束")
 }
@@ -72,22 +75,22 @@ func (wss *WsServer) RemoveWsClient(name string) {
 	}
 }
 
-// 关闭连接
-func (wss *WsServer) close(ctxCancel context.CancelFunc) {
+// 关闭连接（接收当前连接的 channel，避免误关新连接的 channel）
+func (wss *WsServer) close(ctxCancel context.CancelFunc, readChan chan WsMsg, writeChan chan WsMsg) {
 	ctxCancel()
 	conn := wss.Conn
 	wss.Conn = nil // 先置nil，让handleLocal能尽快接受新连接
 	if conn != nil {
 		conn.Close()
 	}
-	close(wss.readChan)
-	close(wss.writeChan)
+	close(readChan)
+	close(writeChan)
 }
 
-func (wss *WsServer) readLoop(ctx context.Context) {
+func (wss *WsServer) readLoop(ctx context.Context, readChan chan WsMsg) {
 	for {
 		select {
-		case msg := <-wss.readChan:
+		case msg := <-readChan:
 			if msg.MsgType == websocket.TextMessage {
 				// 简单的日志记录用于调试
 				var debugMsg map[string]interface{}
@@ -100,6 +103,16 @@ func (wss *WsServer) readLoop(ctx context.Context) {
 						groupId, _ := debugMsg["group_id"].(float64)
 						log.Printf("[OneBot] Event: post_type=%s msg_type=%s sub_type=%s group=%d user=%d\n",
 							postType, msgType, subType, int64(groupId), int64(userId))
+
+						// 从事件中的 self_id 校验/更新 BotId（解决无配置时 NapCat 登录阶段发错误 ID 的问题）
+						if eventSelfId, ok := debugMsg["self_id"].(float64); ok {
+							eventBotId := fmt.Sprintf("%d", int64(eventSelfId))
+							if eventBotId != "0" && eventBotId != wss.BotId {
+								log.Printf("从事件中检测到 BotID 变更 (%s -> %s)，正在更新并重置下游连接...\n", wss.BotId, eventBotId)
+								wss.BotId = eventBotId
+								wss.DisconnectAllClients()
+							}
+						}
 					} else if echo, ok := debugMsg["echo"].(string); ok {
 						// 是API响应
 						log.Printf("[OneBot] ApiResp: echo=%s retcode=%v\n", echo, debugMsg["retcode"])
@@ -194,10 +207,10 @@ func (wss *WsServer) readLoop(ctx context.Context) {
 }
 
 // 处理写入OneBot客户端的消息
-func (wss *WsServer) writeLoop(ctx context.Context) {
+func (wss *WsServer) writeLoop(ctx context.Context, writeChan chan WsMsg) {
 	for {
 		select {
-		case msg := <-wss.writeChan:
+		case msg := <-writeChan:
 			data := msg.MsgData
 			// 对文本消息进行 file:// -> http:// 转换
 			if msg.MsgType == 1 { // websocket.TextMessage
