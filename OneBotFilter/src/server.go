@@ -23,8 +23,8 @@ type WsServer struct {
 // 处理与OneBot客户端的连接
 func (wss *WsServer) WsServerHandler() error {
 	ctx, ctxCancel := context.WithCancel(context.Background())
-	wss.readChan = make(chan WsMsg)
-	wss.writeChan = make(chan WsMsg)
+	wss.readChan = make(chan WsMsg, 128)
+	wss.writeChan = make(chan WsMsg, 128)
 	go wss.readLoop(ctx)       //开启读取OneBot客户端消息协程
 	go wss.writeLoop(ctx)      //开启写入OneBot客户端消息携程
 	defer wss.close(ctxCancel) //注册关闭方法
@@ -75,12 +75,13 @@ func (wss *WsServer) RemoveWsClient(name string) {
 // 关闭连接
 func (wss *WsServer) close(ctxCancel context.CancelFunc) {
 	ctxCancel()
-	if wss.Conn != nil {
-		wss.Conn.Close()
+	conn := wss.Conn
+	wss.Conn = nil // 先置nil，让handleLocal能尽快接受新连接
+	if conn != nil {
+		conn.Close()
 	}
 	close(wss.readChan)
 	close(wss.writeChan)
-	wss.Conn = nil
 }
 
 func (wss *WsServer) readLoop(ctx context.Context) {

@@ -68,8 +68,8 @@ func WsClientHandler(wss *WsServer, cfg BotAppsConfig) {
 			Name:      cfg.Name,
 			conn:      conn,
 			filter:    filter,
-			readChan:  make(chan WsMsg),
-			writeChan: make(chan WsMsg),
+			readChan:  make(chan WsMsg, 128),
+			writeChan: make(chan WsMsg, 128),
 		}
 		err = wss.AddWsClient(client) //添加到客户端列表
 		if err != nil {

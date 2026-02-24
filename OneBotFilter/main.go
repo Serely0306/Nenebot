@@ -7,6 +7,7 @@ import (
 	filter "onebotfilter/src"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -124,9 +125,19 @@ func handleLocal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 如果旧连接存在，主动关闭旧连接让新连接接入
 	if wss.Conn != nil {
-		http.Error(w, "只能连接一个OneBot客户端", http.StatusForbidden)
-		return
+		log.Println("检测到旧连接仍存在，正在关闭旧连接以接受新连接...")
+		wss.Conn.Close()
+		// 等待旧的 WsServerHandler 退出并清理完成
+		for i := 0; i < 50 && wss.Conn != nil; i++ {
+			time.Sleep(100 * time.Millisecond)
+		}
+		if wss.Conn != nil {
+			log.Println("警告：旧连接清理超时，强制重置")
+			wss.Conn = nil
+		}
+		log.Println("旧连接已清理完毕")
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
