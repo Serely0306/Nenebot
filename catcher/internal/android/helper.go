@@ -38,33 +38,25 @@ func (h *AndroidHelper) IsRoot() bool {
 }
 
 // SetProxy 设置系统 HTTP 代理
-//
-//	func (h *AndroidHelper) SetProxy(host string, port int) error {
-//		proxyStr := fmt.Sprintf("%s:%d", host, port)
-//		cmd := exec.Command("settings", "put", "global", "http_proxy", proxyStr)
-//		output, err := cmd.CombinedOutput()
-//		if err != nil {
-//			return fmt.Errorf("设置代理失败: %s", string(output))
-//		}
-//		fmt.Printf("[Android] 已设置代理: %s\n", proxyStr)
-//		return nil
-//	}
+// 依次尝试: su2 提权(Android 7 虚拟机) → 绝对路径 settings(Android 13 实机 root) → PATH settings
 func (h *AndroidHelper) SetProxy(host string, port int) error {
 	su2Path := "/data/user/0/bin.mt.plus/files/term/bin/su2"
 	proxyStr := fmt.Sprintf("%s:%d", host, port)
 
-	// 保留 MT 管理器 Android 7 的设置方式，并增加通用 settings 方案。
 	cmdGroups := [][][]string{
+		// 方案1: MT管理器 su2 提权 (Android 7 虚拟机)
 		{
 			{"/system/bin/sh", su2Path, "-c", fmt.Sprintf("/system/bin/settings put global http_proxy %s", proxyStr)},
 			{"/system/bin/sh", su2Path, "-c", fmt.Sprintf("/system/bin/settings put global global_http_proxy_host %s", host)},
 			{"/system/bin/sh", su2Path, "-c", fmt.Sprintf("/system/bin/settings put global global_http_proxy_port %d", port)},
 		},
+		// 方案2: 绝对路径 settings (Android 13 实机 root)
 		{
 			{"/system/bin/settings", "put", "global", "http_proxy", proxyStr},
 			{"/system/bin/settings", "put", "global", "global_http_proxy_host", host},
 			{"/system/bin/settings", "put", "global", "global_http_proxy_port", strconv.Itoa(port)},
 		},
+		// 方案3: PATH settings (通用回退)
 		{
 			{"settings", "put", "global", "http_proxy", proxyStr},
 			{"settings", "put", "global", "global_http_proxy_host", host},
@@ -75,6 +67,7 @@ func (h *AndroidHelper) SetProxy(host string, port int) error {
 	var errs []string
 	for _, group := range cmdGroups {
 		if err := runCmdGroup(group); err == nil {
+			fmt.Printf("[Android] 本地代理已设置: %s\n", proxyStr)
 			return nil
 		} else {
 			errs = append(errs, err.Error())

@@ -373,13 +373,22 @@ func (p *MitmProxy) setupResponseHandler() {
 
 // processData 处理抓取的数据
 func (p *MitmProxy) processData(region, uid, dataType string, body []byte) {
+	// save_locally 开启时，始终保存原始二进制数据
+	if p.uploader.SaveLocally {
+		if saveErr := p.uploader.SaveRawData(region, uid, dataType, body); saveErr != nil {
+			log.Printf("[%s] 保存原始数据失败: %v\n", dataType, saveErr)
+		}
+	}
+
 	// 解密数据
 	data, err := crypto.DecryptAndUnpack(body, region)
 	if err != nil {
 		log.Printf("[%s] 解密失败: %v\n", dataType, err)
-		// 保存原始数据用于调试
-		if saveErr := p.uploader.SaveRawData(region, uid, dataType, body); saveErr != nil {
-			log.Printf("[%s] 保存原始数据失败: %v\n", dataType, saveErr)
+		// 解密失败时，无论是否开启 save_locally 都保存原始数据
+		if !p.uploader.SaveLocally {
+			if saveErr := p.uploader.SaveRawData(region, uid, dataType, body); saveErr != nil {
+				log.Printf("[%s] 保存原始数据失败: %v\n", dataType, saveErr)
+			}
 		}
 		return
 	}
