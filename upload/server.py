@@ -744,7 +744,7 @@ wget -O killcatcher.sh https://{host}/upload/scripts/kill
     return info, 200, {'Content-Type': 'text/plain; charset=utf-8'}
 
 @app.route('/scripts/kill', methods=['GET'])
-def mysekai_help_android():
+def killcatcher():
     """生成 Android 抓包配置指南"""
     host = request.headers.get('Host')
     
