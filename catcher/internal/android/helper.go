@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -52,27 +53,89 @@ func (h *AndroidHelper) SetProxy(host string, port int) error {
 	su2Path := "/data/user/0/bin.mt.plus/files/term/bin/su2"
 	proxyStr := fmt.Sprintf("%s:%d", host, port)
 
-	// 关键：-c 后面只给一个字符串
-	cmdStr := fmt.Sprintf("/system/bin/settings put global http_proxy %s", proxyStr)
-	// 或者：fmt.Sprintf("/system/bin/settings put --user 0 global http_proxy %s", proxyStr)
-
-	cmd := exec.Command("/system/bin/sh", su2Path, "-c", cmdStr)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("设置代理失败: err=%v, out=%s", err, string(out))
+	// 保留 MT 管理器 Android 7 的设置方式，并增加通用 settings 方案。
+	cmdGroups := [][][]string{
+		{
+			{"/system/bin/sh", su2Path, "-c", fmt.Sprintf("/system/bin/settings put global http_proxy %s", proxyStr)},
+			{"/system/bin/sh", su2Path, "-c", fmt.Sprintf("/system/bin/settings put global global_http_proxy_host %s", host)},
+			{"/system/bin/sh", su2Path, "-c", fmt.Sprintf("/system/bin/settings put global global_http_proxy_port %d", port)},
+		},
+		{
+			{"/system/bin/settings", "put", "global", "http_proxy", proxyStr},
+			{"/system/bin/settings", "put", "global", "global_http_proxy_host", host},
+			{"/system/bin/settings", "put", "global", "global_http_proxy_port", strconv.Itoa(port)},
+		},
+		{
+			{"settings", "put", "global", "http_proxy", proxyStr},
+			{"settings", "put", "global", "global_http_proxy_host", host},
+			{"settings", "put", "global", "global_http_proxy_port", strconv.Itoa(port)},
+		},
 	}
-	return nil
+
+	var errs []string
+	for _, group := range cmdGroups {
+		if err := runCmdGroup(group); err == nil {
+			return nil
+		} else {
+			errs = append(errs, err.Error())
+		}
+	}
+
+	return fmt.Errorf("设置代理失败: %s", strings.Join(errs, " | "))
 }
 
 // ClearProxy 清除系统代理
 func (h *AndroidHelper) ClearProxy() error {
-	cmd := exec.Command("settings", "put", "global", "http_proxy", ":0")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("清除代理失败: %s", string(output))
+	su2Path := "/data/user/0/bin.mt.plus/files/term/bin/su2"
+
+	cmdGroups := [][][]string{
+		{
+			{"/system/bin/sh", su2Path, "-c", "/system/bin/settings put global http_proxy :0"},
+			{"/system/bin/sh", su2Path, "-c", "/system/bin/settings put global global_http_proxy_host :0"},
+			{"/system/bin/sh", su2Path, "-c", "/system/bin/settings put global global_http_proxy_port 0"},
+		},
+		{
+			{"/system/bin/settings", "put", "global", "http_proxy", ":0"},
+			{"/system/bin/settings", "put", "global", "global_http_proxy_host", ":0"},
+			{"/system/bin/settings", "put", "global", "global_http_proxy_port", "0"},
+		},
+		{
+			{"settings", "put", "global", "http_proxy", ":0"},
+			{"settings", "put", "global", "global_http_proxy_host", ":0"},
+			{"settings", "put", "global", "global_http_proxy_port", "0"},
+		},
 	}
-	fmt.Println("[Android] 已清除代理")
-	return nil
+
+	var errs []string
+	for _, group := range cmdGroups {
+		if err := runCmdGroup(group); err == nil {
+			fmt.Println("[Android] 已清除代理")
+			return nil
+		} else {
+			errs = append(errs, err.Error())
+		}
+	}
+
+	return fmt.Errorf("清除代理失败: %s", strings.Join(errs, " | "))
+}
+
+func runCmdGroup(group [][]string) error {
+	var errs []string
+	for _, args := range group {
+		if len(args) == 0 {
+			continue
+		}
+		cmd := exec.Command(args[0], args[1:]...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%v (out=%s)", err, strings.TrimSpace(string(out))))
+		}
+	}
+
+	if len(errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf(strings.Join(errs, "; "))
 }
 
 // subjectHashOld 计算证书的 subject_hash_old (等价于 openssl x509 -subject_hash_old)
