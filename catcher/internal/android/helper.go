@@ -155,8 +155,8 @@ func (h *AndroidHelper) InstallCert(certPath string) (bool, error) {
 // Reboot 重启设备
 func (h *AndroidHelper) Reboot() error {
 	fmt.Println("[Android] 证书已安装，3 秒后自动重启设备...")
-	// 给用户一个反应时间
-	cmd := exec.Command("sh", "-c", "sleep 3 && reboot")
+	su2Path := "/data/user/0/bin.mt.plus/files/term/bin/su2"
+	cmd := exec.Command("/system/bin/sh", su2Path, "-c", "sleep 3 && /system/bin/reboot")
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("重启失败: %w", err)
 	}

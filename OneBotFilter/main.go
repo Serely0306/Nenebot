@@ -125,6 +125,13 @@ func handleLocal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "access-token验证失败", http.StatusUnauthorized)
 		return
 	}
+	// 提前检查 X-Self-ID：如果配置了 bot-id，拒绝不匹配的连接（防止错误的 NapCat 实例踢掉正确的）
+	selfId := strings.TrimSpace(r.Header.Get("X-Self-ID"))
+	if configBotId != "" && selfId != "" && selfId != configBotId {
+		log.Printf("拒绝连接：X-Self-ID (%s) 与配置的 bot-id (%s) 不匹配\n", selfId, configBotId)
+		http.Error(w, "Bot ID不匹配", http.StatusForbidden)
+		return
+	}
 
 	// 如果旧连接存在，主动关闭旧连接让新连接接入
 	if wss.Conn != nil {
@@ -148,18 +155,11 @@ func handleLocal(w http.ResponseWriter, r *http.Request) {
 	// defer conn.Close()
 	wss.Conn = conn
 
-	// 确定 Bot ID：配置文件中的 bot-id 优先，否则从 NapCat 请求头自动检测
+	// 确定 Bot ID
 	var newBotId string
-	selfId := strings.TrimSpace(r.Header.Get("X-Self-ID"))
-
 	if configBotId != "" {
-		// 配置文件明确指定了 bot-id，始终使用它（忽略 NapCat 可能发来的错误 ID）
 		newBotId = configBotId
-		if selfId != "" && selfId != configBotId {
-			log.Printf("注意：NapCat 发送的 X-Self-ID (%s) 与配置的 bot-id (%s) 不同，使用配置值\n", selfId, configBotId)
-		} else {
-			log.Printf("使用配置中的Bot ID: %s\n", newBotId)
-		}
+		log.Printf("使用配置中的Bot ID: %s\n", newBotId)
 	} else if selfId != "" {
 		// 未配置 bot-id，从 NapCat 自动检测
 		newBotId = selfId

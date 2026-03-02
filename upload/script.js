@@ -164,12 +164,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // 处理选中的文件
     function handleFile(file) {
-        const validExtensions = ['.json', '.bin'];
-        const validTypes = ['application/json', 'application/octet-stream'];
+        const knownExtensions = ['.json', '.bin', '.msgpack', '.dat'];
         const ext = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+        const hasExt = file.name.includes('.');
 
-        if (!validExtensions.includes(ext) && !validTypes.includes(file.type)) {
-            showMessage('请选择 JSON 或 BIN 格式的文件', 'error');
+        // 有扩展名时检查是否为已知类型，无扩展名或 octet-stream 视为二进制文件放行
+        if (hasExt && !knownExtensions.includes(ext) && file.type !== 'application/octet-stream' && file.type !== '') {
+            showMessage('不支持的文件格式，请上传 JSON 或二进制文件', 'error');
             return;
         }
         if (file.size > 50 * 1024 * 1024) {

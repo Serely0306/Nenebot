@@ -20,8 +20,7 @@ const banner = `
 ║           LunaBot Catcher - 世界计划抓包工具                  ║
 ║                       v1.0.0                                 ║
 ╠══════════════════════════════════════════════════════════════╣
-║  监听地址: %s
-║  上传服务: %s
+║  代理地址: %s
 ║  本地保存: %s
 ╠══════════════════════════════════════════════════════════════╣
 ║  启动游戏后，数据会自动抓取并上传                             ║
@@ -110,7 +109,7 @@ func main() {
 	if cfg.SaveLocally {
 		saveStatus = "是"
 	}
-	fmt.Printf(banner, cfg.Listen, cfg.UploadServer, saveStatus)
+	fmt.Printf(banner, cfg.Listen, saveStatus)
 
 	// 设置信号处理
 	sigChan := make(chan os.Signal, 1)

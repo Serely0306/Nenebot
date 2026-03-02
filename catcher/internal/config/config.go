@@ -38,7 +38,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Listen:             "0.0.0.0:8888",
-		UploadServer:       "http://127.0.0.1:5000",
+		UploadServer:       "",
 		AutoUpload:         true,
 		SaveLocally:        false,
 		SaveDir:            "./data",

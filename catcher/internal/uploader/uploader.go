@@ -95,12 +95,8 @@ func (u *Uploader) saveToLocal(region, uid, dataType string, data map[string]int
 	return os.WriteFile(filePath, jsonData, 0644)
 }
 
-// SaveRawData 保存原始二进制数据 (用于解密失败时的调试)
+// SaveRawData 保存原始二进制数据
 func (u *Uploader) SaveRawData(region, uid, dataType string, rawData []byte) error {
-	if !u.SaveLocally {
-		return nil
-	}
-
 	dir := filepath.Join(u.SaveDir, region, dataType)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err

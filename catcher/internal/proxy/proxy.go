@@ -384,6 +384,14 @@ func (p *MitmProxy) processData(region, uid, dataType string, body []byte) {
 		return
 	}
 
+	// Suite 数据校验: 必须包含 userGamedata 字段，否则是不完整的交互数据
+	if dataType == "suite" {
+		if _, ok := data["userGamedata"]; !ok {
+			log.Printf("[suite] 跳过不完整的 suite 数据 (缺少 userGamedata), uid: %s\n", uid)
+			return
+		}
+	}
+
 	// 上传
 	if err := p.uploader.Upload(region, uid, dataType, data); err != nil {
 		log.Printf("[%s] 上传失败: %v\n", dataType, err)

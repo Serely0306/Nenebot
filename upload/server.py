@@ -713,14 +713,25 @@ hostname=%APPEND% mkcn-prod-public-60001-1.dailygn.com, mkcn-prod-public-60001-2
 
 @app.route('/mysekai/help/android', methods=['GET'])
 def mysekai_help_android():
-    """生成 MySekai Android 抓包配置指南"""
+    """生成 Android 抓包配置指南"""
     host = request.headers.get('Host')
     
-    info = f"""# MySekai Android 抓包上传配置指南
+    info = f"""# 虚拟机抓包上传配置指南
 
 Android 使用与 haruki-proxy 类似的原理，具体方法参考 haruki-proxy 教程
 将脚本替换成我所提供的内容
 脚本地址在/upload后替换为 /scripts
+下载启动脚本命令：
+wget -O catcher.sh https://{host}/upload/scripts
+下载停止脚本命令：
+wget -O killcatcher.sh https://{host}/upload/scripts/kill
+初次使用流程：
+1. 在MT管理器中，打开终端后cd到你的主目录（一般你打开终端后下方会有一个命令，点击确定）
+2. 在终端中运行wget -O catcher.sh https://{host}/upload/scripts，找到该文件点按，设置选择以扩展包环境执行，以root权限执行，点击执行
+3. 下载完后如自动重启失败则手动重启虚拟机
+使用后需要关闭进程必须使用停止脚本，初次下载之后都直接执行，下载命令见上，如果后续报错如网络错误或地址已经存在，请先确认是否按要求关闭进程
+抓包时直接执行catcher.sh即可，然后运行游戏，所提取数据仅供Nenebot使用
+
 ## 与harukiproxy不同之处
 1. 如果没有harukiproxy证书，注释掉config中指向harukiproxy证书的两行，安装catcher证书后需要重启虚拟机，可在完成2后一起重启
 2. 如果设置代理失败则需要手动设置代理，在设置中的Wifi处长按当前wifi，设置为手动代理，主机名设置为127.0.0.1,端口设置为8888，修改完后重启虚拟机
@@ -728,8 +739,16 @@ Android 使用与 haruki-proxy 类似的原理，具体方法参考 haruki-proxy
 1. CA证书优先使用 haruki-proxy 所安装的证书
 2. 关闭进程请使用下面的脚本，仅关闭终端无法关闭进程
 
-## 停止脚本
-```bash
+
+"""
+    return info, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+
+@app.route('/scripts/kill', methods=['GET'])
+def mysekai_help_android():
+    """生成 Android 抓包配置指南"""
+    host = request.headers.get('Host')
+    
+    info = f"""
 #!/bin/sh
 # 停止 Catcher 并清理代理设置
 
@@ -757,7 +776,6 @@ echo "完成！已停止进程并清除代理设置"
 ```
 """
     return info, 200, {'Content-Type': 'text/plain; charset=utf-8'}
-
 
 @app.route('/scripts', methods=['GET'])
 def generate_android_scripts_config():
