@@ -3,11 +3,16 @@ package qqwife
 import (
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg"
 	"math/rand"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/FloatTech/floatbox/math"
 
@@ -507,7 +512,17 @@ func drawFavorPage(items []favorability, page, totalPages, totalCount int, title
 		return nil, errors.New("当前页没有数据")
 	}
 	fontSize := 50.0
-	canvas := gg.NewContext(1150, int(270+(50+70)*float64(number)))
+	rowHeight := 140.0                                     // 每条目总高度
+	barHeight := 45.0                                      // 进度条高度
+	headerH := 200.0                                       // 标题区域高度
+	footerH := 60.0                                        // 底部页码区域高度
+	avatarSize := 100                                      // 头像尺寸
+	avatarMargin := 15                                     // 头像左边距
+	contentLeft := float64(avatarMargin + avatarSize + 15) // 内容左起始位置
+	canvasW := int(contentLeft) + 1150                     // 画布宽度
+
+	canvasH := int(headerH + rowHeight*float64(number) + footerH)
+	canvas := gg.NewContext(canvasW, canvasH)
 	canvas.SetRGB(1, 1, 1)
 	canvas.Clear()
 
@@ -516,31 +531,67 @@ func drawFavorPage(items []favorability, page, totalPages, totalCount int, title
 		return nil, err
 	}
 	sl, _ := canvas.MeasureString(title)
-	canvas.DrawString(title, (1100-sl)/2, 100)
+	canvas.DrawString(title, (float64(canvasW)-sl)/2, 100)
 	canvas.DrawString("————————————————————", 0, 160)
 
 	if err := canvas.ParseFontFace(fontData, fontSize); err != nil {
 		return nil, err
 	}
-	_, h := canvas.MeasureString("焯")
+
+	// 并发下载所有头像
+	avatars := make([]image.Image, number)
+	var wg sync.WaitGroup
+	for i, info := range items {
+		targetID, _ := strconv.ParseInt(info.Userinfo, 10, 64)
+		wg.Add(1)
+		go func(idx int, qq int64) {
+			defer wg.Done()
+			avatars[idx] = fetchAvatar(qq, avatarSize)
+		}(i, targetID)
+	}
+	wg.Wait()
 
 	for i, info := range items {
 		targetID, _ := strconv.ParseInt(info.Userinfo, 10, 64)
 		userName := ctx.CardOrNickName(targetID)
 
-		canvas.SetRGB255(0, 0, 0)
-		canvas.DrawString(userName+"("+info.Userinfo+")", 10, float64(180+(50+70)*i))
-		canvas.DrawString(strconv.Itoa(info.Favor), 1020, float64(180+60+(50+70)*i))
+		baseY := headerH + rowHeight*float64(i)
+		nameY := baseY + fontSize                    // 名字基线
+		barTop := baseY + fontSize + 15              // 进度条顶部
+		numY := barTop + barHeight/2 + fontSize*0.35 // 数值与进度条垂直居中
 
-		canvas.DrawRectangle(10, float64(180+60+(50+70)*i)-h/2, 1000, 50)
+		// 绘制圆形头像
+		avatarX := avatarMargin
+		avatarY := int(baseY+(fontSize+15+barHeight)/2) - avatarSize/2
+		if avatars[i] != nil {
+			canvas.DrawImage(avatars[i], avatarX, avatarY)
+		} else {
+			// 头像获取失败，画灰色圆形占位
+			cx := float64(avatarX) + float64(avatarSize)/2
+			cy := float64(avatarY) + float64(avatarSize)/2
+			canvas.SetRGB255(200, 200, 200)
+			canvas.DrawCircle(cx, cy, float64(avatarSize)/2)
+			canvas.Fill()
+		}
+
+		// 绘制用户名
+		canvas.SetRGB255(0, 0, 0)
+		canvas.DrawString(userName+"("+info.Userinfo+")", contentLeft, nameY)
+
+		// 绘制数值（与进度条垂直居中）
+		canvas.DrawString(strconv.Itoa(info.Favor), contentLeft+1010, numY)
+
+		// 绘制背景条
+		canvas.DrawRectangle(contentLeft, barTop, 1000, barHeight)
 		canvas.SetRGB255(150, 150, 150)
 		canvas.Fill()
 
+		// 绘制好感度条
 		barWidth := float64(info.Favor) * 10
 		if barWidth > 1000 {
 			barWidth = 1000
 		}
-		canvas.DrawRectangle(10, float64(180+60+(50+70)*i)-h/2, barWidth, 50)
+		canvas.DrawRectangle(contentLeft, barTop, barWidth, barHeight)
 
 		switch {
 		case info.Favor >= 80:
@@ -559,9 +610,31 @@ func drawFavorPage(items []favorability, page, totalPages, totalCount int, title
 	canvas.SetRGB255(120, 120, 120)
 	pageInfo := fmt.Sprintf("第 %d/%d 页 · 共 %d 人", page, totalPages, totalCount)
 	pw, _ := canvas.MeasureString(pageInfo)
-	canvas.DrawString(pageInfo, (1100-pw)/2, float64(180+(50+70)*number)+20)
+	canvas.DrawString(pageInfo, (float64(canvasW)-pw)/2, headerH+rowHeight*float64(number)+30)
 
 	return imgfactory.ToBytes(canvas.Image())
+}
+
+// 获取 QQ 头像，缩放并裁剪为圆形，失败返回 nil
+func fetchAvatar(qq int64, size int) image.Image {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("https://q4.qlogo.cn/g?b=qq&nk=%d&s=100", qq))
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	avatar, _, err := image.Decode(resp.Body)
+	if err != nil {
+		return nil
+	}
+	// 缩放到目标尺寸
+	scaled := imgfactory.Size(avatar, size, size).Image()
+	// 在子画布上裁剪为圆形
+	c := gg.NewContext(size, size)
+	c.DrawCircle(float64(size)/2, float64(size)/2, float64(size)/2)
+	c.Clip()
+	c.DrawImage(scaled, 0, 0)
+	return c.Image()
 }
 
 // ==================== 好感度查询与更新 ====================
