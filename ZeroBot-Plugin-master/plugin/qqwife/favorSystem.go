@@ -159,6 +159,12 @@ func init() {
 				ctx.Send(message.ReplyWithMessage(ctx.Event.MessageID, message.At(uid), message.Text("你想给自己买什么礼物呢?")))
 				return
 			}
+			// 判断是否需要重置
+			err := 民政局.开门时间(gid)
+			if err != nil {
+				ctx.SendChain(message.Text("[ERROR]:", err))
+				return
+			}
 			// 获取CD
 			groupInfo, err := 民政局.查看设置(gid)
 			if err != nil {
