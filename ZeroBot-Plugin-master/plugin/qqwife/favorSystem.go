@@ -223,9 +223,9 @@ func init() {
 					changeStr = fmt.Sprintf("(%d)", newFavor)
 				}
 				if mood == 0 {
-					ctx.SendChain(message.Text("你花了", moneyToFavor, wallet.GetWalletName(), "买了礼物送给了ta,ta表示不太需要\n好感度 ", favor, " → ", lastfavor, " ", changeStr))
+					ctx.SendChain(message.Text("你花了", moneyToFavor, wallet.GetWalletName(), "买了一件女装送给了ta,ta很不喜欢\n好感度 ", favor, " → ", lastfavor, " ", changeStr))
 				} else {
-					ctx.SendChain(message.Text("你花了", moneyToFavor, wallet.GetWalletName(), "买了礼物送给了ta,ta收下了\n好感度 ", favor, " → ", lastfavor, " ", changeStr))
+					ctx.SendChain(message.Text("你花了", moneyToFavor, wallet.GetWalletName(), "买了一件女装送给了ta,ta很喜欢\n好感度 ", favor, " → ", lastfavor, " ", changeStr))
 				}
 			} else {
 				// 指定礼物模式
@@ -281,7 +281,7 @@ func init() {
 				}
 				ctx.SendChain(message.Text(
 					"你花了", selectedGift.Cost, wallet.GetWalletName(),
-					"给ta买了【", selectedGift.Name, "】\n",
+					"买了", selectedGift.Name, "送给了ta\n",
 					resultMsg,
 					"\n好感度 ", favor, " → ", lastfavor, " ", changeStr,
 				))
