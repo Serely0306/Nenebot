@@ -250,13 +250,9 @@ func init() {
 				}
 				newFavor := selectedGift.MinFavor + rand.Intn(favorRange+1)
 				actualFailChance := selectedGift.FailChance
-				if favor > 50 {
-					newFavor = (newFavor + 1) / 2
-					actualFailChance += 20
-				}
 				isDislike := rand.Intn(100) < actualFailChance
 				if isDislike {
-					newFavor = -(rand.Intn(5) + 1)
+					newFavor = -newFavor
 				}
 				err = wallet.InsertWalletOf(uid, -selectedGift.Cost)
 				if err != nil {
