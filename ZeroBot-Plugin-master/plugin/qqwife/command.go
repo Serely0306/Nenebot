@@ -222,43 +222,133 @@ func init() {
 				ctx.SendChain(message.Text("今天还没有人结婚哦"))
 				return
 			}
-			/***********设置图片的大小和底色***********/
-			fontSize := 50.0
-			if number < 10 {
-				number = 10
-			}
-			canvas := gg.NewContext(1500, int(250+fontSize*float64(number)))
-			canvas.SetRGB(1, 1, 1) // 白色
-			canvas.Clear()
-			/***********下载字体，可以注销掉***********/
+
+			// 布局参数
+			fontSize := 40.0
+			rowHeight := 90.0
+			avatarSize := 70
+			arrowGap := 8.0 // 头像与箭头之间间距
+			headerH := 180.0
+			footerH := 40.0
+			padding := 15.0 // 左右画布边距
+
+			// 下载字体
 			data, err := file.GetLazyData(text.BoldFontFile, control.Md5File, true)
 			if err != nil {
 				ctx.SendChain(message.Text("[qqwife]ERROR: ", err))
+				return
 			}
-			/***********设置字体颜色为黑色***********/
-			canvas.SetRGB(0, 0, 0)
-			/***********设置字体大小,并获取字体高度用来定位***********/
+
+			// 用临时画布测量名字宽度（确定画布大小）
+			tmp := gg.NewContext(1, 1)
+			if err = tmp.ParseFontFace(data, fontSize); err != nil {
+				ctx.SendChain(message.Text("[qqwife]ERROR: ", err))
+				return
+			}
+			arrowW, _ := tmp.MeasureString("←→")
+			centerW := float64(avatarSize)*2 + arrowW + arrowGap*4
+
+			// 收集 QQ ID 和名字，测量最大宽度
+			var allQQs []int64
+			maxSideW := 0.0
+			for _, info := range list {
+				uq, _ := strconv.ParseInt(info[1], 10, 64)
+				tq, _ := strconv.ParseInt(info[3], 10, 64)
+				allQQs = append(allQQs, uq, tq)
+				// 测量左侧名字
+				nameA := info[0] + "(" + info[1] + ")"
+				wA, _ := tmp.MeasureString(nameA)
+				if wA > maxSideW {
+					maxSideW = wA
+				}
+				// 测量右侧名字
+				nameB := info[2] + "(" + info[3] + ")"
+				wB, _ := tmp.MeasureString(nameB)
+				if wB > maxSideW {
+					maxSideW = wB
+				}
+			}
+
+			// 自适应画布宽度：两侧对称 + 中间区域 + 边距
+			canvasW := int(maxSideW*2 + centerW + padding*2 + 20)
+			if canvasW < 1200 {
+				canvasW = 1200
+			}
+
+			// 并发下载头像
+			avatars := fetchAvatarsConcurrent(allQQs, avatarSize)
+
+			displayNum := number
+			if displayNum < 5 {
+				displayNum = 5
+			}
+			canvasH := int(headerH + rowHeight*float64(displayNum) + footerH)
+			canvas := gg.NewContext(canvasW, canvasH)
+			drawStarryBackground(canvas)
+
+			// 绘制标题
+			canvas.SetRGB(1, 1, 1)
 			if err = canvas.ParseFontFace(data, fontSize*2); err != nil {
 				ctx.SendChain(message.Text("[qqwife]ERROR: ", err))
 				return
 			}
-			sl, h := canvas.MeasureString("群老婆列表")
-			/***********绘制标题***********/
-			canvas.DrawString("群老婆列表", (1500-sl)/2, 160-h) // 放置在中间位置
-			canvas.DrawString("————————————————————", 0, 250-h)
-			/***********设置字体大小,并获取字体高度用来定位***********/
+			sl, _ := canvas.MeasureString("群老婆列表")
+			canvas.DrawString("群老婆列表", (float64(canvasW)-sl)/2, 100)
+			canvas.SetRGBA(1, 1, 1, 0.3)
+			canvas.SetLineWidth(2)
+			canvas.DrawLine(0, 150, float64(canvasW), 150)
+			canvas.Stroke()
+
+			// 设置正文字体
 			if err = canvas.ParseFontFace(data, fontSize); err != nil {
 				ctx.SendChain(message.Text("[qqwife]ERROR: ", err))
 				return
 			}
-			_, h = canvas.MeasureString("焯")
+
+			centerX := float64(canvasW) / 2
+
 			for i, info := range list {
-				canvas.DrawString(slicename(info[0], canvas), 0, float64(260+50*i)-h)
-				canvas.DrawString("("+info[1]+")", 350, float64(260+50*i)-h)
-				canvas.DrawString("←→", 700, float64(260+50*i)-h)
-				canvas.DrawString(slicename(info[2], canvas), 800, float64(260+50*i)-h)
-				canvas.DrawString("("+info[3]+")", 1150, float64(260+50*i)-h)
+				baseY := headerH + rowHeight*float64(i)
+				midY := baseY + rowHeight/2
+
+				// 头像位置
+				avatarAX := int(centerX - arrowW/2 - arrowGap*2 - float64(avatarSize))
+				avatarBX := int(centerX + arrowW/2 + arrowGap*2)
+				avatarY := int(midY) - avatarSize/2
+
+				// 绘制头像A
+				if avatars[i*2] != nil {
+					canvas.DrawImage(avatars[i*2], avatarAX, avatarY)
+				} else {
+					canvas.SetRGBA(1, 1, 1, 0.15)
+					canvas.DrawCircle(float64(avatarAX)+float64(avatarSize)/2, midY, float64(avatarSize)/2)
+					canvas.Fill()
+				}
+
+				// 绘制头像B
+				if avatars[i*2+1] != nil {
+					canvas.DrawImage(avatars[i*2+1], avatarBX, avatarY)
+				} else {
+					canvas.SetRGBA(1, 1, 1, 0.15)
+					canvas.DrawCircle(float64(avatarBX)+float64(avatarSize)/2, midY, float64(avatarSize)/2)
+					canvas.Fill()
+				}
+
+				// 绘制←→箭头
+				canvas.SetRGBA(1, 1, 1, 0.7)
+				canvas.DrawString("←→", centerX-arrowW/2, midY+fontSize*0.15)
+
+				// 左侧名字（右对齐）
+				canvas.SetRGB(1, 1, 1)
+				nameA := info[0] + "(" + info[1] + ")"
+				nw, _ := canvas.MeasureString(nameA)
+				canvas.DrawString(nameA, float64(avatarAX)-10-nw, midY+fontSize*0.15)
+
+				// 右侧名字（左对齐）
+				nameB := info[2] + "(" + info[3] + ")"
+				canvas.DrawString(nameB, float64(avatarBX+avatarSize)+10, midY+fontSize*0.15)
 			}
+
 			data, err = imgfactory.ToBytes(canvas.Image())
 			if err != nil {
 				ctx.SendChain(message.Text("[qqwife]ERROR: ", err))

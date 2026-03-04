@@ -3,16 +3,11 @@ package qqwife
 import (
 	"errors"
 	"fmt"
-	"image"
-	_ "image/jpeg"
 	"math/rand"
-	"net/http"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/FloatTech/floatbox/math"
 
@@ -67,7 +62,6 @@ var defaultGiftList = []giftItem{
 	{"限定手办", 100, 8, 18, 10, "ta非常看重这份独特的收藏", "ta对此类物件并没有太大的共鸣"},
 	{"演唱会门票", 150, 12, 25, 20, "ta对即将到来的行程充满期待", "ta对这种嘈杂的场合感到些许负担"},
 	{"神秘礼盒", 80, 1, 30, 40, "ta被这份未知的惊喜触动了", "ta对这份惊喜感到局促"},
-	{"女装", 50, 1, 10, 50, "ta似乎很中意这种风格的尝试", "ta觉得这份礼物有些不合时宜"},
 	{"猫咪玩偶", 40, 4, 10, 10, "ta神情松弛地摩挲着玩偶绒毛", "ta对这种占空间的物件感到些许困扰"},
 	{"手写信", 5, 2, 20, 35, "ta被字里行间的情绪深深打动", "ta读完后只是静静将其收起，未发一言"},
 	{"葡萄柚", 25, 2, 6, 0, "ta很喜欢", "ta受不了这种微苦而酸涩的气息"},
@@ -182,7 +176,7 @@ func init() {
 				return
 			}
 			if !ok {
-				ctx.SendChain(message.Text("舔狗，你的礼物CD还没好呢。"))
+				ctx.SendChain(message.Text("舔狗，你已经送过礼物了。"))
 				return
 			}
 			// 获取好感度
@@ -523,33 +517,29 @@ func drawFavorPage(items []favorability, page, totalPages, totalCount int, title
 
 	canvasH := int(headerH + rowHeight*float64(number) + footerH)
 	canvas := gg.NewContext(canvasW, canvasH)
-	canvas.SetRGB(1, 1, 1)
-	canvas.Clear()
+	drawStarryBackground(canvas)
 
-	canvas.SetRGB(0, 0, 0)
+	canvas.SetRGB(1, 1, 1) // 白色文字
 	if err := canvas.ParseFontFace(fontData, fontSize*2); err != nil {
 		return nil, err
 	}
 	sl, _ := canvas.MeasureString(title)
 	canvas.DrawString(title, (float64(canvasW)-sl)/2, 100)
-	canvas.DrawString("————————————————————", 0, 160)
+	canvas.SetRGBA(1, 1, 1, 0.3)
+	canvas.SetLineWidth(2)
+	canvas.DrawLine(0, 160, float64(canvasW), 160)
+	canvas.Stroke()
 
 	if err := canvas.ParseFontFace(fontData, fontSize); err != nil {
 		return nil, err
 	}
 
 	// 并发下载所有头像
-	avatars := make([]image.Image, number)
-	var wg sync.WaitGroup
+	qqIDs := make([]int64, number)
 	for i, info := range items {
-		targetID, _ := strconv.ParseInt(info.Userinfo, 10, 64)
-		wg.Add(1)
-		go func(idx int, qq int64) {
-			defer wg.Done()
-			avatars[idx] = fetchAvatar(qq, avatarSize)
-		}(i, targetID)
+		qqIDs[i], _ = strconv.ParseInt(info.Userinfo, 10, 64)
 	}
-	wg.Wait()
+	avatars := fetchAvatarsConcurrent(qqIDs, avatarSize)
 
 	for i, info := range items {
 		targetID, _ := strconv.ParseInt(info.Userinfo, 10, 64)
@@ -569,13 +559,13 @@ func drawFavorPage(items []favorability, page, totalPages, totalCount int, title
 			// 头像获取失败，画灰色圆形占位
 			cx := float64(avatarX) + float64(avatarSize)/2
 			cy := float64(avatarY) + float64(avatarSize)/2
-			canvas.SetRGB255(200, 200, 200)
+			canvas.SetRGBA(1, 1, 1, 0.15)
 			canvas.DrawCircle(cx, cy, float64(avatarSize)/2)
 			canvas.Fill()
 		}
 
 		// 绘制用户名
-		canvas.SetRGB255(0, 0, 0)
+		canvas.SetRGB(1, 1, 1)
 		canvas.DrawString(userName+"("+info.Userinfo+")", contentLeft, nameY)
 
 		// 绘制数值（与进度条垂直居中）
@@ -583,7 +573,7 @@ func drawFavorPage(items []favorability, page, totalPages, totalCount int, title
 
 		// 绘制背景条
 		canvas.DrawRectangle(contentLeft, barTop, 1000, barHeight)
-		canvas.SetRGB255(150, 150, 150)
+		canvas.SetRGBA(1, 1, 1, 0.2)
 		canvas.Fill()
 
 		// 绘制好感度条
@@ -595,11 +585,11 @@ func drawFavorPage(items []favorability, page, totalPages, totalCount int, title
 
 		switch {
 		case info.Favor >= 80:
-			canvas.SetRGB255(255, 105, 180) // 粉色
+			canvas.SetRGBA255(255, 150, 200, 220) // 粉色
 		case info.Favor >= 50:
-			canvas.SetRGB255(255, 165, 0) // 橙色
+			canvas.SetRGBA255(255, 200, 80, 220) // 金色
 		default:
-			canvas.SetRGB255(231, 27, 100) // 红色
+			canvas.SetRGBA255(180, 100, 220, 220) // 紫色
 		}
 		canvas.Fill()
 	}
@@ -607,34 +597,12 @@ func drawFavorPage(items []favorability, page, totalPages, totalCount int, title
 	if err := canvas.ParseFontFace(fontData, fontSize*0.7); err != nil {
 		return nil, err
 	}
-	canvas.SetRGB255(120, 120, 120)
+	canvas.SetRGBA(1, 1, 1, 0.5)
 	pageInfo := fmt.Sprintf("第 %d/%d 页 · 共 %d 人", page, totalPages, totalCount)
 	pw, _ := canvas.MeasureString(pageInfo)
 	canvas.DrawString(pageInfo, (float64(canvasW)-pw)/2, headerH+rowHeight*float64(number)+30)
 
 	return imgfactory.ToBytes(canvas.Image())
-}
-
-// 获取 QQ 头像，缩放并裁剪为圆形，失败返回 nil
-func fetchAvatar(qq int64, size int) image.Image {
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("https://q4.qlogo.cn/g?b=qq&nk=%d&s=100", qq))
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	avatar, _, err := image.Decode(resp.Body)
-	if err != nil {
-		return nil
-	}
-	// 缩放到目标尺寸
-	scaled := imgfactory.Size(avatar, size, size).Image()
-	// 在子画布上裁剪为圆形
-	c := gg.NewContext(size, size)
-	c.DrawCircle(float64(size)/2, float64(size)/2, float64(size)/2)
-	c.Clip()
-	c.DrawImage(scaled, 0, 0)
-	return c.Image()
 }
 
 // ==================== 好感度查询与更新 ====================
