@@ -1,5 +1,5 @@
 #!/bin/sh
-# 停止 LunaBot Catcher 并清理代理设置
+# 停止 Catcher 并清理代理设置
 
 # 获取 Root 权限
 if [ "$(id -u)" -ne 0 ]; then
@@ -11,14 +11,16 @@ if [ "$(id -u)" -ne 0 ]; then
     fi
 fi
 
-echo "正在停止 LunaBot Catcher..."
+echo "正在停止 Catcher..."
 
 # 停止进程
 pkill -f "Catcher-android-arm64" 2>/dev/null
-pkill -f "lunabot-catcher" 2>/dev/null
+pkill -f "catcher" 2>/dev/null
 
 # 清除代理设置
-settings put global http_proxy :0 2>/dev/null
-settings put global https_proxy :0 2>/dev/null
+su2 <<SETTINGS
+settings put global http_proxy :0
+settings put global https_proxy :0
+SETTINGS
 
 echo "完成！已停止进程并清除代理设置"

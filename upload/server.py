@@ -745,167 +745,27 @@ wget -O killcatcher.sh https://{host}/upload/scripts/kill
 
 @app.route('/scripts/kill', methods=['GET'])
 def killcatcher():
-    """生成 Android 抓包配置指南"""
-    host = request.headers.get('Host')
-    
-    info = f"""
-#!/bin/sh
-# 停止 Catcher 并清理代理设置
+    """下载 kill-catcher.sh 脚本"""
+    scripts_dir = Path(__file__).parent.parent / 'catcher' / 'scripts'
+    return send_from_directory(str(scripts_dir), 'kill-catcher.sh', mimetype='text/x-shellscript')
 
-# 获取 Root 权限
-if [ "$(id -u)" -ne 0 ]; then
-    if command -v su >/dev/null 2>&1; then
-        exec su -c "$0 $*"
-    else
-        echo "此脚本需要 Root 权限运行" >&2
-        exit 1
-    fi
-fi
-
-echo "正在停止 Catcher..."
-
-# 停止进程
-pkill -f "Catcher-android-arm64" 2>/dev/null
-pkill -f "catcher" 2>/dev/null
-
-# 清除代理设置
-settings put global http_proxy :0 2>/dev/null
-settings put global https_proxy :0 2>/dev/null
-
-echo "完成！已停止进程并清除代理设置"
-```
-"""
-    return info, 200, {'Content-Type': 'text/plain; charset=utf-8'}
-
-@app.route('/scripts', methods=['GET'])
-def generate_android_scripts_config():
-    """
-    生成 Android 自动部署脚本 (流式响应)
-    适用于 Android 7 / 虚拟机环境
-    """
-    host = request.headers.get('Host')
-    
-    def generate():
-        # --- 脚本头部 ---
-        yield "#!/bin/sh\n"
-        yield "# ============================================================\n"
-        yield "# Catcher 自动部署脚本\n"
-        yield "# 用于在 Android 设备/模拟器上自动下载并运行抓包工具\n"
-        yield "# \n"
-        yield "# ============================================================\n\n"
-
-        # --- 获取 Root 权限 ---
-        yield """# 获取 Root 权限
-if [ "$(id -u)" -ne 0 ]; then
-    if command -v su >/dev/null 2>&1; then
-        exec su -c "$0 $*"
-    elif command -v sudo >/dev/null 2>&1; then
-        exec sudo "$0" "$@"
-    else
-        echo "此脚本需要 Root 权限运行" >&2
-        exit 1
-    fi
-fi\n\n"""
-
-        # --- 配置区域 ---
-        yield "# ============================================================\n"
-        yield "# 配置区域 (根据需要修改)\n"
-        yield "# ============================================================\n\n"
-        
-        yield """# 工作目录
-ROOT_DIR="/data/local/tmp/catcher"
-
-# 可执行文件名和下载地址
-BIN_NAME="Catcher-android-arm64"
-"""
-        yield f'BIN_URL="http://{host}/upload/download/$BIN_NAME"\n\n'
-        
-        yield """# 配置文件名和下载地址
-CONFIG_NAME="config-android.yaml"
-"""
-        yield f'CONFIG_URL="http://{host}/upload/download/$CONFIG_NAME"\n\n'
-
-        yield """
-# ============================================================
-# 脚本逻辑
-# ============================================================
-
-echo "=================================================="
-echo "  Catcher 自动部署脚本"
-echo "=================================================="
-
-# 确保工作目录存在
-if [ ! -d "$ROOT_DIR" ]; then
-    echo "[1/4] 创建工作目录: $ROOT_DIR"
-    mkdir -p "$ROOT_DIR"
-fi
-
-cd "$ROOT_DIR"
-
-# 下载可执行文件 (如果不存在)
-if [ ! -f "$BIN_NAME" ]; then
-    echo "[2/4] 下载可执行文件..."
-    if command -v curl >/dev/null 2>&1; then
-        curl -L -o "$BIN_NAME" "$BIN_URL"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -O "$BIN_NAME" "$BIN_URL"
-    else
-        echo "错误: 未找到 curl 或 wget，无法下载文件"
-        echo "请手动将 $BIN_NAME 推送到 $ROOT_DIR/"
-        exit 1
-    fi
-    chmod 0755 "$BIN_NAME"
-else
-    echo "[2/4] 可执行文件已存在，跳过下载"
-fi
-
-# 下载配置文件 (如果不存在)
-if [ ! -f "$CONFIG_NAME" ]; then
-    echo "[3/4] 下载配置文件..."
-    if command -v curl >/dev/null 2>&1; then
-        curl -L -o "$CONFIG_NAME" "$CONFIG_URL"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -O "$CONFIG_NAME" "$CONFIG_URL"
-    else
-        echo "警告: 无法下载配置文件，将使用默认配置"
-    fi
-else
-    echo "[3/4] 配置文件已存在，跳过下载"
-fi
-
-# 设置 DNS (某些虚拟机需要)
-echo "[4/4] 配置网络环境..."
-if [ ! -f /etc/resolv.conf ]; then
-    mount -o remount,rw /system 2>/dev/null
-    touch /etc/resolv.conf 2>/dev/null
-fi
-if ! grep -q "223.5.5.5" /etc/resolv.conf 2>/dev/null; then
-    mount -o remount,rw /system 2>/dev/null
-    echo "nameserver 223.5.5.5" >> /etc/resolv.conf 2>/dev/null
-    echo "nameserver 223.6.6.6" >> /etc/resolv.conf 2>/dev/null
-fi
-
-echo ""
-echo "=================================================="
-echo "  准备完成，正在启动 Catcher..."
-echo "=================================================="
-echo ""
-
-# 运行程序
-exec ./"$BIN_NAME" -config "$CONFIG_NAME"
-"""
-
-    # 返回流式响应，Content-Type 设为 shell script
-    return Response(stream_with_context(generate()), mimetype='text/x-shellscript')
-
-# 允许下载的文件白名单
-ALLOWED_DOWNLOADS = ['Catcher-android-arm64', 'config-android.yaml']
+# 允许下载的文件白名单及对应目录
+CATCHER_DIR = Path(__file__).parent.parent / 'catcher'
+DOWNLOAD_FILES = {
+    # 可执行文件和配置
+    'Catcher-android-arm64': str(CATCHER_DIR),
+    'config-android.yaml': str(CATCHER_DIR),
+    # 脚本文件
+    'catcher.sh': str(CATCHER_DIR / 'scripts'),
+    'kill-catcher.sh': str(CATCHER_DIR / 'scripts'),
+    'uninstall-catcher.sh': str(CATCHER_DIR / 'scripts'),
+}
 
 @app.route('/download/<filename>')
 def download_file(filename):
-    if filename not in ALLOWED_DOWNLOADS:
+    if filename not in DOWNLOAD_FILES:
         return jsonify({'error': '文件不存在'}), 404
-    return send_from_directory('/root/bot/catcher/', filename)
+    return send_from_directory(DOWNLOAD_FILES[filename], filename)
 
 @app.route('/upload/<data_type>', methods=['POST'])
 def upload(data_type):
