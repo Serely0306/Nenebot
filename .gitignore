@@ -43,6 +43,7 @@
 # 其他自定义
 OneBotFilter/config.yaml
 ZeroBot-Plugin-master/config.json
+ZeroBot-Plugin-master/go.mod
 ZeroBot-Plugin-master/config1.json
 haruki/
 **/.gitignore
