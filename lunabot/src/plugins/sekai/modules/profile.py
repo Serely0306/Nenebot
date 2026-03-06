@@ -981,10 +981,12 @@ async def build_profile_play_section(
                 'allPerfect': 0,
             } for diff in DIFF_COLORS.keys()
         ]
-    hs, vs = 8, 12
-    gw, gh = (76, 22) if compact else (82, 24)
-    padding = 22 if compact else 28
-    with HSplit().set_content_align('c').set_item_align('t').set_sep(12).set_bg(ui_bg).set_padding(padding) as ret:
+    # pjsk detail 复用时收紧统计网格，减少右侧留白。
+    hs, vs = (6, 10) if compact else (8, 12)
+    gw, gh = (72, 22) if compact else (82, 24)
+    padding = 14 if compact else 28
+    split_sep = 8 if compact else 12
+    with HSplit().set_content_align('c').set_item_align('t').set_sep(split_sep).set_bg(ui_bg).set_padding(padding) as ret:
         with VSplit().set_sep(vs):
             Spacer(gh, gh)
             ImageBox(ctx.static_imgs.get("icon_clear.png"), size=(gh, gh))

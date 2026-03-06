@@ -723,8 +723,9 @@ async def compose_pjsk_detail_image(ctx: SekaiHandlerContext, qid: int) -> Image
     item_value_style = TextStyle(font=DEFAULT_BOLD_FONT, size=24, color=(30, 30, 30))
     text_style = TextStyle(font=DEFAULT_FONT, size=18, color=(60, 60, 60))
     red_style = TextStyle(font=DEFAULT_FONT, size=18, color=(180, 20, 20))
-    left_col_1_w = 520
-    left_col_2_w = 660
+    # 左上两列重新分配宽度，给简易信息更多空间，同时保持下方总宽度不变。
+    left_col_1_w = 560
+    left_col_2_w = 620
     left_total_w = left_col_1_w + left_col_2_w + 16
     top_row_h = 210
     second_row_h = 340
