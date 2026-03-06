@@ -1522,14 +1522,17 @@ async def compose_deck_recommend_image(
                     # suite中没有该卡，提示需要抓包更新
                     raise ReplyException(f"当前卡组中的卡牌 {bp_card['cardId']} 不在Suite数据中，请更新抓包数据")
 
-    # 如果卡组完全固定则只需要跑一种算法，并删除profile中除固定以外的其他卡牌以减少开销
-    is_deck_fixed = options.fixed_cards and len(options.fixed_cards) == 5 or use_current_deck
-    if is_deck_fixed:
+    # 如果主队5卡完全固定则只需要跑一种算法
+    has_five_fixed_cards = bool(options.fixed_cards) and len(options.fixed_cards) == 5
+    is_main_deck_fixed = has_five_fixed_cards or use_current_deck
+    if is_main_deck_fixed:
         options.algorithm = "dfs"
-        profile['userCards'] = [
-            uc for uc in profile['userCards']
-            if uc['cardId'] in options.fixed_cards
-        ]
+        # WL活动还需要从其余卡中计算支援编组，不能只保留主队5卡
+        if not is_wl:
+            profile['userCards'] = [
+                uc for uc in profile['userCards']
+                if uc['cardId'] in options.fixed_cards
+            ]
 
     # 歌曲比较相关
     music_compare = False
@@ -1541,7 +1544,7 @@ async def compose_deck_recommend_image(
 
         if not music_diffs_to_compare:
             # 必须至少固定歌曲或固定卡组，（非固定卡组的情况每首都组一遍开销太大）
-            assert_and_reply(is_deck_fixed, f"""
+            assert_and_reply(is_main_deck_fixed, f"""
 如果不限定要比较的歌曲，则必须固定一个卡组！
 1. 固定5个卡牌ID:
 /指令 ... 歌曲比较 #1 2 3 4 5
@@ -1630,14 +1633,34 @@ async def compose_deck_recommend_image(
     event_ctx = ctx
     resolved_event = None
     recommend_region = ctx.region
-    if options.event_id and ctx.region != "jp":
-        resolved_event = await ctx.md.events.find_by_id(options.event_id)
-        if not resolved_event:
-            jp_event = await jp_ctx.md.events.find_by_id(options.event_id)
-            if jp_event:
-                resolved_event = jp_event
-                event_ctx = jp_ctx
-                recommend_region = "jp"
+    if ctx.region != "jp" and options.fixed_cards:
+        missing_fixed_cards = []
+        for cid in options.fixed_cards:
+            if not await ctx.md.cards.find_by_id(cid):
+                missing_fixed_cards.append(cid)
+        if missing_fixed_cards:
+            for cid in missing_fixed_cards:
+                if await jp_ctx.md.cards.find_by_id(cid):
+                    recommend_region = "jp"
+                    logger.info(f"固定卡牌 {cid} 在 {ctx.region} 不存在，组卡回退到 JP masterdata")
+                    break
+
+    if options.event_id:
+        primary_ctx = jp_ctx if recommend_region == "jp" else ctx
+        secondary_ctx = None
+        if recommend_region == "jp":
+            secondary_ctx = ctx
+        elif ctx.region != "jp":
+            secondary_ctx = jp_ctx
+
+        resolved_event = await primary_ctx.md.events.find_by_id(options.event_id)
+        event_ctx = primary_ctx
+        if not resolved_event and secondary_ctx:
+            fallback_event = await secondary_ctx.md.events.find_by_id(options.event_id)
+            if fallback_event:
+                resolved_event = fallback_event
+                event_ctx = secondary_ctx
+                recommend_region = secondary_ctx.region
 
     options.region = recommend_region
     log_options(ctx, uid, options)
@@ -1731,17 +1754,19 @@ async def compose_deck_recommend_image(
     if recommend_type == "unit_attr" and options.event_type == "cheerful_carnival":
         live_name = "5v5"
         
+    recommend_ctx = ctx if recommend_region == ctx.region else jp_ctx
+
     # 获取挑战角色名字和头像
     chara_name = None
     if recommend_type == "challenge":
-        chara = await ctx.md.game_characters.find_by_id(options.challenge_live_character_id)
+        chara = await recommend_ctx.md.game_characters.find_by_id(options.challenge_live_character_id)
         chara_name = chara.get('firstName', '') + chara.get('givenName', '')
         chara_icon = get_chara_icon_by_chara_id(chara['id'])
 
     # 获取WL角色名字和头像
     wl_chara_name = None
     if options.world_bloom_character_id:
-        wl_chara = await ctx.md.game_characters.find_by_id(options.world_bloom_character_id)
+        wl_chara = await recommend_ctx.md.game_characters.find_by_id(options.world_bloom_character_id)
         if wl_chara:
             wl_chara_name = wl_chara.get('firstName', '') + wl_chara.get('givenName', '')
             wl_chara_icon = get_chara_icon_by_chara_id(wl_chara['id'])
@@ -1765,13 +1790,13 @@ async def compose_deck_recommend_image(
                 if abs(bonus - int(bonus)) < 0.01:
                     bonus = int(bonus)
                 custom_text = f"+{bonus}%"
-            return await get_card_full_thumbnail(ctx, card, pcard=pcard, custom_text=custom_text)
+            return await get_card_full_thumbnail(recommend_ctx, card, pcard=pcard, custom_text=custom_text)
         except: 
             return UNKNOWN_IMG
     card_imgs, card_keys = [], []
     for deck in result_decks:
         for deckcard in deck.cards:
-            card = await ctx.md.cards.find_by_id(deckcard.card_id)
+            card = await recommend_ctx.md.cards.find_by_id(deckcard.card_id)
             usercard = find_by(profile['userCards'], 'cardId', deckcard.card_id)
             pcard = {
                 'cardId': deckcard.card_id,
@@ -1795,7 +1820,7 @@ async def compose_deck_recommend_image(
         except: challenge_live_info = {}
         for deck in result_decks:
             card_id = deck.cards[0].card_id
-            chara_id = (await ctx.md.cards.find_by_id(card_id))['characterId']
+            chara_id = (await recommend_ctx.md.cards.find_by_id(card_id))['characterId']
             _, high_score, _, _ = challenge_live_info.get(chara_id, (None, 0, None, None))
             challenge_score_dlt.append(deck.score - high_score)
 
@@ -2030,7 +2055,7 @@ async def compose_deck_recommend_image(
                                     with HSplit().set_content_align('c').set_item_align('c').set_sep(8).set_padding(0):
                                         for card in deck.cards:
                                             card_id = card.card_id
-                                            character_id = (await ctx.md.cards.find_by_id(card_id))['characterId']
+                                            character_id = (await recommend_ctx.md.cards.find_by_id(card_id))['characterId']
                                             event_bonus = card.event_bonus_rate
                                             ep1_read, ep2_read = card.episode1_read, card.episode2_read
                                             slv, sup = card.skill_level, int(card.skill_score_up)

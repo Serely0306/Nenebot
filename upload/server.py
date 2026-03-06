@@ -720,14 +720,15 @@ def mysekai_help_android():
 
 Android 使用与 haruki-proxy 类似的原理，具体方法参考 haruki-proxy 教程
 将脚本替换成我所提供的内容
-脚本地址在/upload后替换为 /scripts
 下载启动脚本命令：
-wget -O catcher.sh https://{host}/upload/scripts
+wget https://{host}/upload/download/catcher.sh
 下载停止脚本命令：
-wget -O killcatcher.sh https://{host}/upload/scripts/kill
+wget https://{host}/upload/download/kill-catcher.sh
+下载卸载脚本命令：
+wget https://{host}/upload/download/uninstall-catcher.sh
 初次使用流程：
 1. 在MT管理器中，打开终端后cd到你的主目录（一般你打开终端后下方会有一个命令，点击确定）
-2. 在终端中运行wget -O catcher.sh https://{host}/upload/scripts，找到该文件点按，设置选择以扩展包环境执行，以root权限执行，点击执行
+2. 在终端中运行wget https://{host}/upload/download/catcher.sh，找到该文件点按，设置选择以扩展包环境执行，以root权限执行，点击执行
 3. 下载完后如自动重启失败则手动重启虚拟机
 使用后需要关闭进程必须使用停止脚本，初次下载之后都直接执行，下载命令见上，如果后续报错如网络错误或地址已经存在，请先确认是否按要求关闭进程
 抓包时直接执行catcher.sh即可，然后运行游戏，所提取数据仅供Nenebot使用
