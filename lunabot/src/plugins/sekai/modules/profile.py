@@ -928,6 +928,86 @@ async def compose_profile_image(ctx: SekaiHandlerContext, basic_profile: dict, v
     add_watermark(canvas, text)
     return await canvas.get_img(1.5)
 
+async def _prepare_profile_overview_data(
+    ctx: SekaiHandlerContext,
+    basic_profile: dict,
+    detail_profile: Optional[dict] = None,
+) -> dict:
+    # 复用 /个人信息 的背景和当前队伍信息，给 pjsk detail 的打歌区使用。
+    bg_settings = get_profile_bg_settings(ctx)
+    ui_bg = roundrect_bg(
+        fill=(255, 255, 255, bg_settings.alpha),
+        blurglass=True,
+        blurglass_kwargs={'blur': bg_settings.blur},
+    )
+    user = basic_profile['user']
+    uid = str(user['userId'])
+    decks = basic_profile.get('userDeck', {})
+    pcards = [
+        find_by(basic_profile.get('userCards', []), 'cardId', decks.get(f'member{i}'))
+        for i in range(1, 6)
+        if decks.get(f'member{i}')
+    ]
+    pcards = [pcard for pcard in pcards if pcard]
+    for pcard in pcards:
+        pcard['after_training'] = pcard['defaultImage'] == "special_training" and pcard['specialTrainingStatus'] == "done"
+    avatar_info = await get_player_avatar_info_by_basic_profile(ctx, basic_profile)
+    return {
+        'bg_settings': bg_settings,
+        'ui_bg': ui_bg,
+        'user': user,
+        'uid': uid,
+        'pcards': pcards,
+        'avatar_info': avatar_info,
+        'detail_profile': detail_profile,
+    }
+
+async def build_profile_play_section(
+    ctx: SekaiHandlerContext,
+    basic_profile: dict,
+    detail_profile: Optional[dict] = None,
+    compact: bool = False,
+) -> Frame:
+    # 只保留 pjsk detail 复用到的打歌统计 section。
+    data = await _prepare_profile_overview_data(ctx, basic_profile, detail_profile)
+    ui_bg = data['ui_bg']
+    diff_count = basic_profile.get('userMusicDifficultyClearCount', [])
+    if not diff_count:
+        diff_count = [
+            {
+                'musicDifficultyType': diff,
+                'liveClear': 0,
+                'fullCombo': 0,
+                'allPerfect': 0,
+            } for diff in DIFF_COLORS.keys()
+        ]
+    hs, vs = 8, 12
+    gw, gh = (76, 22) if compact else (82, 24)
+    padding = 22 if compact else 28
+    with HSplit().set_content_align('c').set_item_align('t').set_sep(12).set_bg(ui_bg).set_padding(padding) as ret:
+        with VSplit().set_sep(vs):
+            Spacer(gh, gh)
+            ImageBox(ctx.static_imgs.get("icon_clear.png"), size=(gh, gh))
+            ImageBox(ctx.static_imgs.get("icon_fc.png"), size=(gh, gh))
+            ImageBox(ctx.static_imgs.get("icon_ap.png"), size=(gh, gh))
+        with Grid(col_count=6).set_sep(hsep=hs, vsep=vs):
+            for diff, color in DIFF_COLORS.items():
+                TextBox(diff.upper(), TextStyle(font=DEFAULT_BOLD_FONT, size=16, color=WHITE))\
+                    .set_bg(RoundRectBg(fill=color, radius=3)).set_size((gw, gh)).set_content_align('c')
+            for score_key, play_key in [('liveClear', 'clear'), ('fullCombo', 'fc'), ('allPerfect', 'ap')]:
+                for idx, diff in enumerate(DIFF_COLORS.keys()):
+                    bg_color = (255, 255, 255, 150) if idx % 2 == 0 else (255, 255, 255, 100)
+                    count_info = find_by(diff_count, 'musicDifficultyType', diff) or {}
+                    count = count_info.get(score_key, 0)
+                    TextBox(
+                        str(count),
+                        TextStyle(
+                            DEFAULT_FONT, 20, PLAY_RESULT_COLORS['not_clear'], use_shadow=True,
+                            shadow_color=PLAY_RESULT_COLORS[play_key], shadow_offset=1,
+                        ),
+                    ).set_bg(RoundRectBg(fill=bg_color, radius=3)).set_size((gw, gh)).set_content_align('c')
+    return ret
+
 # 个人信息背景设置
 async def set_profile_bg_settings(
     ctx: SekaiHandlerContext,

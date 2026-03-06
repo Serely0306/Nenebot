@@ -535,6 +535,8 @@ class RegionMasterDataCollection:
         self.stamps                                                         = RegionMasterDataWrapper(region, "stamps")
         self.cards                                                          = RegionMasterDataWrapper(region, "cards")
         self.card_supplies                                                  = RegionMasterDataWrapper(region, "cardSupplies")
+        # pjsk detail 的材料名称和筛选规则复用统一 masterdata wrapper。
+        self.materials                                                      = RegionMasterDataWrapper(region, "materials")
         self.skills                                                         = RegionMasterDataWrapper(region, "skills")
         self.honors                                                         = RegionMasterDataWrapper(region, "honors")
         self.honor_groups                                                   = RegionMasterDataWrapper(region, "honorGroups")

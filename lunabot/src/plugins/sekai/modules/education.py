@@ -34,10 +34,11 @@ UNIT_SEKAI_AREA_IDS = {
 
 # 获取玩家挑战live信息，返回（rank, score, remain_jewel, remain_fragment）
 async def get_user_challenge_live_info(ctx: SekaiHandlerContext, profile: dict) -> Dict[int, Tuple[int, int, int, int]]:
+    # pjsk detail 也会复用这里，缺字段时按空列表降级，避免整图报错。
     challenge_info = {}
-    challenge_results = profile['userChallengeLiveSoloResults']
-    challenge_stages = profile['userChallengeLiveSoloStages']
-    challenge_rewards = profile['userChallengeLiveSoloHighScoreRewards']
+    challenge_results = profile.get('userChallengeLiveSoloResults', [])
+    challenge_stages = profile.get('userChallengeLiveSoloStages', [])
+    challenge_rewards = profile.get('userChallengeLiveSoloHighScoreRewards', [])
     for cid in range(1, 27):
         stages = find_by(challenge_stages, 'characterId', cid, mode='all')
         rank = max([stage['rank'] for stage in stages]) if stages else 0
@@ -57,13 +58,8 @@ async def get_user_challenge_live_info(ctx: SekaiHandlerContext, profile: dict) 
         challenge_info[cid] = (rank, score, remain_jewel, remain_fragment)
     return challenge_info
 
-# 合成挑战live详情图片
-async def compose_challenge_live_detail_image(ctx: SekaiHandlerContext, qid: int) -> Image.Image:
-    profile, err_msg = await get_detailed_profile(
-        ctx, qid, 
-        filter=get_detailed_profile_card_filter('userChallengeLiveSoloResults','userChallengeLiveSoloStages','userChallengeLiveSoloHighScoreRewards'), 
-        raise_exc=True)
-    
+async def build_challenge_live_detail_section(ctx: SekaiHandlerContext, profile: dict):
+    # 原挑战信息表格拆成 section，保留原命令绘图口径不变。
     challenge_info = await get_user_challenge_live_info(ctx, profile)
 
     header_h, row_h = 56, 48
@@ -71,78 +67,90 @@ async def compose_challenge_live_detail_image(ctx: SekaiHandlerContext, qid: int
     text_style = TextStyle(font=DEFAULT_FONT, size=20, color=(50, 50, 50, 255))
     w1, w2, w3, w4, w5, w6 = 80, 80, 150, 300, 80, 80
 
-    max_score = max([item['highScore'] for item in await ctx.md.challenge_live_high_score_rewards.get()])
+    reward_items = await ctx.md.challenge_live_high_score_rewards.get()
+    max_score = max([item['highScore'] for item in reward_items], default=1)
+
+    with VSplit().set_content_align('c').set_item_align('c').set_sep(8).set_padding(16).set_bg(roundrect_bg()) as f:
+        with HSplit().set_content_align('c').set_item_align('c').set_sep(8).set_h(header_h).set_padding(4).set_bg(roundrect_bg()):
+            TextBox("角色", header_style).set_w(w1).set_content_align('c')
+            TextBox("等级", header_style).set_w(w2).set_content_align('c')
+            TextBox("分数", header_style).set_w(w3).set_content_align('c')
+            TextBox(f"进度(上限{max_score//10000}w)", header_style).set_w(w4).set_content_align('c')
+            with Frame().set_w(w5).set_content_align('c'):
+                ImageBox(ctx.static_imgs.get("jewel.png"), size=(None, 40))
+            with Frame().set_w(w6).set_content_align('c'):
+                ImageBox(ctx.static_imgs.get("shard.png"), size=(None, 40))
+
+        for cid in range(1, 27):
+            bg_color = (255, 255, 255, 150) if cid % 2 == 0 else (255, 255, 255, 100)
+            rank = str(challenge_info[cid][0]) if challenge_info[cid][0] else "-"
+            score = str(challenge_info[cid][1]) if challenge_info[cid][1] else "-"
+            jewel = str(challenge_info[cid][2])
+            fragment = str(challenge_info[cid][3])
+            with HSplit().set_content_align('c').set_item_align('c').set_sep(8).set_h(row_h).set_padding(4).set_bg(roundrect_bg(fill=bg_color)):
+                with Frame().set_w(w1).set_content_align('c'):
+                    ImageBox(get_chara_icon_by_chara_id(cid), size=(None, 40))
+                TextBox(rank, text_style).set_w(w2).set_content_align('c')
+                TextBox(score, text_style.replace(font=DEFAULT_BOLD_FONT)).set_w(w3).set_content_align('c')
+
+                with Frame().set_w(w4).set_content_align('lt'):
+                    x = challenge_info[cid][1]
+                    progress = max(min(x / max_score, 1), 0)
+                    total_w, total_h, border = w4, 14, 2
+                    progress_w = int((total_w - border * 2) * progress)
+                    progress_h = total_h - border * 2
+                    color = (255, 50, 50, 255)
+                    if x > 250_0000:    color = (100, 255, 100, 255)
+                    elif x > 200_0000:  color = (255, 255, 100, 255)
+                    elif x > 150_0000:  color = (255, 200, 100, 255)
+                    elif x > 100_0000:  color = (255, 150, 100, 255)
+                    elif x > 50_0000:   color = (255, 100, 100, 255)
+                    if progress > 0:
+                        Spacer(w=total_w, h=total_h).set_bg(RoundRectBg(fill=(100, 100, 100, 255), radius=total_h//2))
+                        Spacer(w=progress_w, h=progress_h).set_bg(RoundRectBg(fill=color, radius=(total_h-border)//2)).set_offset((border, border))
+
+                        def draw_line(line_x: int):
+                            p = line_x / max_score
+                            if p <= 0 or p >= 1:
+                                return
+                            lx = int((total_w - border * 2) * p)
+                            line_color = (100, 100, 100, 255) if line_x < x else (150, 150, 150, 255)
+                            Spacer(w=1, h=total_h//2-1).set_bg(FillBg(line_color)).set_offset((border + lx - 1, total_h//2))
+                        for line_x in range(0, max_score, 50_0000):
+                            draw_line(line_x)
+                    else:
+                        Spacer(w=total_w, h=total_h).set_bg(RoundRectBg(fill=(100, 100, 100, 100), radius=total_h//2))
+
+                TextBox(jewel, text_style).set_w(w5).set_content_align('c')
+                TextBox(fragment, text_style).set_w(w6).set_content_align('c')
+    return f
+
+async def compose_challenge_live_detail_image(ctx: SekaiHandlerContext, qid: int) -> Image.Image:
+    profile, err_msg = await get_detailed_profile(
+        ctx, qid, 
+        filter=get_detailed_profile_card_filter('userChallengeLiveSoloResults','userChallengeLiveSoloStages','userChallengeLiveSoloHighScoreRewards'), 
+        raise_exc=True)
 
     with Canvas(bg=SEKAI_BLUE_BG).set_padding(BG_PADDING) as canvas:
         with VSplit().set_content_align('lt').set_item_align('lt').set_sep(16):
             await get_detailed_profile_card(ctx, profile, err_msg)
-            with VSplit().set_content_align('c').set_item_align('c').set_sep(8).set_padding(16).set_bg(roundrect_bg()):
-                # 标题
-                with HSplit().set_content_align('c').set_item_align('c').set_sep(8).set_h(header_h).set_padding(4).set_bg(roundrect_bg()):
-                    TextBox("角色", header_style).set_w(w1).set_content_align('c')
-                    TextBox("等级", header_style).set_w(w2).set_content_align('c')
-                    TextBox("分数", header_style).set_w(w3).set_content_align('c')
-                    TextBox(f"进度(上限{max_score//10000}w)", header_style).set_w(w4).set_content_align('c')
-                    with Frame().set_w(w5).set_content_align('c'):
-                        ImageBox(ctx.static_imgs.get("jewel.png"), size=(None, 40))
-                    with Frame().set_w(w6).set_content_align('c'):
-                        ImageBox(ctx.static_imgs.get("shard.png"), size=(None, 40))
-
-                # 项目
-                for cid in range(1, 27):
-                    bg_color = (255, 255, 255, 150) if cid % 2 == 0 else (255, 255, 255, 100)
-                    rank = str(challenge_info[cid][0]) if challenge_info[cid][0] else "-"
-                    score = str(challenge_info[cid][1]) if challenge_info[cid][1] else "-"
-                    jewel = str(challenge_info[cid][2])
-                    fragment = str(challenge_info[cid][3])
-                    with HSplit().set_content_align('c').set_item_align('c').set_sep(8).set_h(row_h).set_padding(4).set_bg(roundrect_bg(fill=bg_color)):
-                        with Frame().set_w(w1).set_content_align('c'):
-                            ImageBox(get_chara_icon_by_chara_id(cid), size=(None, 40))
-                        TextBox(rank, text_style).set_w(w2).set_content_align('c')
-                        TextBox(score, text_style.replace(font=DEFAULT_BOLD_FONT)).set_w(w3).set_content_align('c')
-
-                        with Frame().set_w(w4).set_content_align('lt'):
-                            x = challenge_info[cid][1]
-                            progress = max(min(x / max_score, 1), 0)
-                            total_w, total_h, border = w4, 14, 2
-                            progress_w = int((total_w - border * 2) * progress)
-                            progress_h = total_h - border * 2
-                            color = (255, 50, 50, 255)
-                            if x > 250_0000:    color = (100, 255, 100, 255)
-                            elif x > 200_0000:  color = (255, 255, 100, 255)
-                            elif x > 150_0000:  color = (255, 200, 100, 255)
-                            elif x > 100_0000:  color = (255, 150, 100, 255)
-                            elif x > 50_0000:   color = (255, 100, 100, 255)
-                            if progress > 0:
-                                Spacer(w=total_w, h=total_h).set_bg(RoundRectBg(fill=(100, 100, 100, 255), radius=total_h//2))
-                                Spacer(w=progress_w, h=progress_h).set_bg(RoundRectBg(fill=color, radius=(total_h-border)//2)).set_offset((border, border))
-
-                                def draw_line(line_x: int):
-                                    p = line_x / max_score
-                                    if p <= 0 or p >= 1: return
-                                    lx = int((total_w - border * 2) * p)
-                                    color = (100, 100, 100, 255) if line_x < x else (150, 150, 150, 255)
-                                    Spacer(w=1, h=total_h//2-1).set_bg(FillBg(color)).set_offset((border + lx - 1, total_h//2))
-                                for line_x in range(0, max_score, 50_0000):
-                                    draw_line(line_x)
-                            else:
-                                Spacer(w=total_w, h=total_h).set_bg(RoundRectBg(fill=(100, 100, 100, 100), radius=total_h//2))
-
-                        TextBox(jewel, text_style).set_w(w5).set_content_align('c')
-                        TextBox(fragment, text_style).set_w(w6).set_content_align('c')
+            await build_challenge_live_detail_section(ctx, profile)
 
     add_watermark(canvas)
     return await canvas.get_img()
 
 # 获取玩家加成信息
 async def get_user_power_bonus(ctx: SekaiHandlerContext, profile: dict) -> Dict[str, int]:
+    # pjsk detail 复用加成计算时，缺失 suite 字段统一按 0 处理。
     # 获取区域道具
     area_items: List[dict] = []
-    for user_area in profile['userAreas']:
+    for user_area in profile.get('userAreas', []):
         for user_area_item in user_area.get('areaItems', []):
             item_id = user_area_item['areaItemId']
             lv = user_area_item['level']
-            area_items.append(find_by(find_by(await ctx.md.area_item_levels.get(), 'areaItemId', item_id, mode='all'), 'level', lv))
+            item = find_by(find_by(await ctx.md.area_item_levels.get(), 'areaItemId', item_id, mode='all'), 'level', lv)
+            if item:
+                area_items.append(item)
 
     # 角色加成 = 区域道具 + 角色等级 + 烤森家具
     chara_bonus = { i : {
@@ -153,9 +161,10 @@ async def get_user_power_bonus(ctx: SekaiHandlerContext, profile: dict) -> Dict[
     for item in area_items:
         if item.get('targetGameCharacterId', "any") != "any":
             chara_bonus[item['targetGameCharacterId']]['area_item'] += item['power1BonusRate']
-    for chara in profile['userCharacters']:
+    for chara in profile.get('userCharacters', []):
         rank = find_by(await ctx.md.character_ranks.find_by('characterId', chara['characterId'], mode='all'), 'characterRank', chara['characterRank'])
-        chara_bonus[chara['characterId']]['rank'] += rank['power1BonusRate']
+        if rank:
+            chara_bonus[chara['characterId']]['rank'] += rank['power1BonusRate']
     for fb in profile.get('userMysekaiFixtureGameCharacterPerformanceBonuses', []):
         chara_bonus[fb['gameCharacterId']]['fixture'] += fb['totalBonusRate'] * 0.1
     
@@ -171,6 +180,8 @@ async def get_user_power_bonus(ctx: SekaiHandlerContext, profile: dict) -> Dict[
     for gate in profile.get('userMysekaiGates', []):
         gate_id = gate['mysekaiGateId']
         bonus = find_by(await ctx.md.mysekai_gate_levels.find_by('mysekaiGateId', gate_id, mode='all'), 'level', gate['mysekaiGateLevel'])
+        if not bonus:
+            continue
         unit_bonus[UNITS[gate_id - 1]]['gate'] += bonus['powerBonusRate']
         max_bonus = max(max_bonus, bonus['powerBonusRate'])
     unit_bonus[UNIT_VS]['gate'] += max_bonus
@@ -196,6 +207,42 @@ async def get_user_power_bonus(ctx: SekaiHandlerContext, profile: dict) -> Dict[
         "attr": attr_bouns
     }
 
+async def build_power_bonus_detail_section(ctx: SekaiHandlerContext, profile: dict):
+    # 原加成信息表格拆成 section，供原命令和 pjsk detail 共用。
+    bonus = await get_user_power_bonus(ctx, profile)
+    chara_bonus = bonus['chara']
+    unit_bonus = bonus['unit']
+    attr_bonus = bonus['attr']
+
+    header_style = TextStyle(font=DEFAULT_BOLD_FONT, size=24, color=(25, 25, 25, 255))
+    text_style = TextStyle(font=DEFAULT_FONT, size=16, color=(100, 100, 100, 255))
+
+    with VSplit().set_content_align('lt').set_item_align('lt').set_sep(8).set_item_bg(roundrect_bg()).set_bg(roundrect_bg()).set_padding(16) as f:
+        cid_parts = [range(1, 5), range(5, 9), range(9, 13), range(13, 17), range(17, 21), range(21, 27)]
+        for cids in cid_parts:
+            with Grid(col_count=2).set_content_align('l').set_item_align('l').set_sep(20, 4).set_padding(16):
+                for cid in cids:
+                    with HSplit().set_content_align('l').set_item_align('l').set_sep(4):
+                        ImageBox(get_chara_icon_by_chara_id(cid), size=(None, 40))
+                        TextBox(f"{chara_bonus[cid]['total']:.1f}%", header_style).set_w(100).set_content_align('r').set_overflow('clip')
+                        detail = f"区域道具{chara_bonus[cid]['area_item']:.1f}% + 角色等级{chara_bonus[cid]['rank']:.1f}% + 烤森玩偶{chara_bonus[cid]['fixture']:.1f}%"
+                        TextBox(detail, text_style)
+
+        with Grid(col_count=3).set_content_align('l').set_item_align('l').set_sep(20, 4).set_padding(16):
+            for unit in UNITS:
+                with HSplit().set_content_align('l').set_item_align('l').set_sep(4):
+                    ImageBox(get_unit_icon(unit), size=(None, 40))
+                    TextBox(f"{unit_bonus[unit]['total']:.1f}%", header_style).set_w(100).set_content_align('r').set_overflow('clip')
+                    detail = f"区域道具{unit_bonus[unit]['area_item']:.1f}% + 烤森门{unit_bonus[unit]['gate']:.1f}%"
+                    TextBox(detail, text_style)
+
+        with Grid(col_count=5).set_content_align('l').set_item_align('l').set_sep(20, 4).set_padding(16):
+            for attr in CARD_ATTRS:
+                with HSplit().set_content_align('l').set_item_align('l').set_sep(4):
+                    ImageBox(get_attr_icon(attr), size=(None, 40))
+                    TextBox(f"{attr_bonus[attr]['total']:.1f}%", header_style).set_w(100).set_content_align('r').set_overflow('clip')
+    return f
+
 # 合成加成详情图片
 async def compose_power_bonus_detail_image(ctx: SekaiHandlerContext, qid: int) -> Image.Image:
     profile, err_msg = await get_detailed_profile(
@@ -203,48 +250,10 @@ async def compose_power_bonus_detail_image(ctx: SekaiHandlerContext, qid: int) -
         qid, 
         filter=get_detailed_profile_card_filter('userAreas','userCharacters','userMysekaiFixtureGameCharacterPerformanceBonuses','userMysekaiGates'), 
         raise_exc=True)
- 
-    bonus = await get_user_power_bonus(ctx, profile)
-    chara_bonus = bonus['chara']
-    unit_bonus = bonus['unit']
-    attr_bonus = bonus['attr']
-
-    header_h, row_h = 56, 48
-    header_style = TextStyle(font=DEFAULT_BOLD_FONT, size=24, color=(25, 25, 25, 255))
-    text_style = TextStyle(font=DEFAULT_FONT, size=16, color=(100, 100, 100, 255))
-
     with Canvas(bg=SEKAI_BLUE_BG).set_padding(BG_PADDING) as canvas:
         with VSplit().set_content_align('lt').set_item_align('lt').set_sep(16):
             await get_detailed_profile_card(ctx, profile, err_msg)
-            with VSplit().set_content_align('lt').set_item_align('lt').set_sep(8).set_item_bg(roundrect_bg()).set_bg(roundrect_bg()).set_padding(16):
-                # 角色加成
-                cid_parts = [range(1, 5), range(5, 9), range(9, 13), range(13, 17), range(17, 21), range(21, 27)]
-                for cids in cid_parts:
-                    with Grid(col_count=2).set_content_align('l').set_item_align('l').set_sep(20, 4).set_padding(16):
-                        for cid in cids:
-                            with HSplit().set_content_align('l').set_item_align('l').set_sep(4):
-                                ImageBox(get_chara_icon_by_chara_id(cid), size=(None, 40))
-                                TextBox(f"{chara_bonus[cid]['total']:.1f}%", header_style).set_w(100).set_content_align('r').set_overflow('clip')
-                                detail = f"区域道具{chara_bonus[cid]['area_item']:.1f}% + 角色等级{chara_bonus[cid]['rank']:.1f}% + 烤森玩偶{chara_bonus[cid]['fixture']:.1f}%"
-                                TextBox(detail, text_style)
-                        
-                # 组合加成
-                with Grid(col_count=3).set_content_align('l').set_item_align('l').set_sep(20, 4).set_padding(16):
-                    for unit in UNITS:
-                        with HSplit().set_content_align('l').set_item_align('l').set_sep(4):
-                            ImageBox(get_unit_icon(unit), size=(None, 40))
-                            TextBox(f"{unit_bonus[unit]['total']:.1f}%", header_style).set_w(100).set_content_align('r').set_overflow('clip')
-                            detail = f"区域道具{unit_bonus[unit]['area_item']:.1f}% + 烤森门{unit_bonus[unit]['gate']:.1f}%"
-                            TextBox(detail, text_style)
-
-                # 属性加成
-                with Grid(col_count=5).set_content_align('l').set_item_align('l').set_sep(20, 4).set_padding(16):
-                    for attr in CARD_ATTRS:
-                        with HSplit().set_content_align('l').set_item_align('l').set_sep(4):
-                            ImageBox(get_attr_icon(attr), size=(None, 40))
-                            TextBox(f"{attr_bonus[attr]['total']:.1f}%", header_style).set_w(100).set_content_align('r').set_overflow('clip')
-                            # detail = f"区域道具{attr_bonus[attr]['area_item']:.1f}%"
-                            # TextBox(detail, text_style)
+            await build_power_bonus_detail_section(ctx, profile)
 
     add_watermark(canvas)
     return await canvas.get_img()
