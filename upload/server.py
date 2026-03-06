@@ -343,6 +343,8 @@ def get_suite_data(region, uid):
     local_err = None
     haruki_err = None
     local_path = LUNABOT_DATA_BASE / region / 'suite' / f'{uid}.json'
+    # Haruki 公开 suite 当前不提供这两个字段，请求时剔除以避免整组 key 失败。
+    haruki_unsupported_keys = {'userChargedCurrency', 'userBoostItems'}
     
     # 辅助函数：获取本地数据
     def get_local_data():
@@ -360,8 +362,9 @@ def get_suite_data(region, uid):
     def get_haruki_data():
         nonlocal haruki_err
         haruki_url = f"https://toolbox-api-direct.haruki.seiunx.com/public/{region}/suite/{uid}"
-        if filter_keys:
-            haruki_url += f"?key={','.join(filter_keys)}"
+        haruki_filter_keys = [key for key in filter_keys if key not in haruki_unsupported_keys]
+        if haruki_filter_keys:
+            haruki_url += f"?key={','.join(haruki_filter_keys)}"
         try:
             resp = http_requests.get(haruki_url, timeout=15)
             if resp.ok:

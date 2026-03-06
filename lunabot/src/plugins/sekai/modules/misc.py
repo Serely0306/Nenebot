@@ -374,24 +374,15 @@ heyiwei = SekaiCmdHandler(["/pjsk detail", ])
 heyiwei.check_cdrate(cd).check_wblist(gbl)
 
 def get_pjsk_detail_missing_lines(profile: dict) -> list[str]:
-    # 汇总 pjsk detail 依赖字段，缺什么就放到图上统一提示。
-    section_fields = {
-        "账号资源": ['userGamedata', 'userChargedCurrency', 'userBoostItems', 'userMaterials'],
-        "卡牌统计": ['userCards'],
-        "加成信息": ['userAreas', 'userCharacters', 'userMysekaiGates', 'userMysekaiFixtureGameCharacterPerformanceBonuses'],
-        "挑战信息": ['userChallengeLiveSoloResults', 'userChallengeLiveSoloStages', 'userChallengeLiveSoloHighScoreRewards'],
-        "队长次数": ['userCharacterMissionV2s', 'userCharacterMissionV2Statuses'],
-    }
-    lines = []
-    for section, keys in section_fields.items():
-        missing = [key for key in keys if key not in profile]
-        if not missing:
-            continue
-        if len(missing) == len(keys):
-            lines.append(f"{section} 缺失字段: {', '.join(missing)}")
-        else:
-            lines.append(f"{section} 缺失子字段: {', '.join(missing)}")
-    return lines
+    # 逐字段提示 suite 缺失内容，便于直接判断是远端不提供还是数据本身缺失。
+    required_keys = [
+        'userGamedata', 'userChargedCurrency', 'userBoostItems', 'userMaterials',
+        'userCards',
+        'userAreas', 'userCharacters', 'userMysekaiGates', 'userMysekaiFixtureGameCharacterPerformanceBonuses',
+        'userChallengeLiveSoloResults', 'userChallengeLiveSoloStages', 'userChallengeLiveSoloHighScoreRewards',
+        'userCharacterMissionV2s', 'userCharacterMissionV2Statuses',
+    ]
+    return [f"你的Suite数据源没有提供{key}数据" for key in required_keys if key not in profile]
 
 async def get_pjsk_detail_card_stats(ctx: SekaiHandlerContext, profile: dict) -> dict:
     user_cards = profile.get('userCards', [])
@@ -467,7 +458,7 @@ async def get_pjsk_detail_material_items(ctx: SekaiHandlerContext, profile: dict
     return result
 
 def build_pjsk_detail_basic_profile(profile: dict) -> dict:
-    # 当基础接口不可用时，用 suite 中已有字段回填出最小可绘制资料。
+    # 基础 profile 接口不可用时，用 suite 中已有字段回填最小资料结构。
     user_gamedata = profile.get('userGamedata', {})
     deck_id = user_gamedata.get('deck')
     return {
@@ -480,7 +471,8 @@ def build_pjsk_detail_basic_profile(profile: dict) -> dict:
         'userCards': profile.get('userCards', []),
         'userProfile': profile.get('userProfile', {}),
         'userProfileHonors': profile.get('userProfileHonors', []),
-        'userMusicDifficultyClearCount': profile.get('userMusicDifficultyClearCount', []),
+        # 打歌统计仍按原本 profile 接口逻辑获取，这里不从 suite 回填。
+        'userMusicDifficultyClearCount': [],
     }
 
 async def build_pjsk_detail_value_panel(
@@ -681,7 +673,6 @@ async def compose_pjsk_detail_image(ctx: SekaiHandlerContext, qid: int) -> Image
             'userCharacterMissionV2Statuses',
             'userProfile',
             'userProfileHonors',
-            'userMusicDifficultyClearCount',
         ),
         raise_exc=True,
     )
