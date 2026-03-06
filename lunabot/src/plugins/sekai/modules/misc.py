@@ -374,15 +374,18 @@ heyiwei = SekaiCmdHandler(["/pjsk detail", ])
 heyiwei.check_cdrate(cd).check_wblist(gbl)
 
 def get_pjsk_detail_missing_lines(profile: dict) -> list[str]:
-    # 逐字段提示 suite 缺失内容，便于直接判断是远端不提供还是数据本身缺失。
-    required_keys = [
-        'userGamedata', 'userChargedCurrency', 'userBoostItems', 'userMaterials',
-        'userCards',
-        'userAreas', 'userCharacters', 'userMysekaiGates', 'userMysekaiFixtureGameCharacterPerformanceBonuses',
-        'userChallengeLiveSoloResults', 'userChallengeLiveSoloStages', 'userChallengeLiveSoloHighScoreRewards',
-        'userCharacterMissionV2s', 'userCharacterMissionV2Statuses',
-    ]
-    return [f"你的Suite数据源没有提供{key}数据" for key in required_keys if key not in profile]
+    # 按区块汇总缺失字段，统一提示哪些区域会按 0 处理。
+    section_fields = {
+        '资源材料': ['userGamedata', 'userChargedCurrency', 'userBoostItems', 'userMaterials'],
+        '卡面统计': ['userCards'],
+        '加成信息': ['userAreas', 'userCharacters', 'userMysekaiGates', 'userMysekaiFixtureGameCharacterPerformanceBonuses'],
+        '挑战信息': ['userChallengeLiveSoloResults', 'userChallengeLiveSoloStages', 'userChallengeLiveSoloHighScoreRewards'],
+        '队长次数': ['userCharacterMissionV2s', 'userCharacterMissionV2Statuses'],
+    }
+    lines = [f"{section}：{', '.join(missing)}" for section, keys in section_fields.items() if (missing := [key for key in keys if key not in profile])]
+    if not lines:
+        return []
+    return ['你的Suite数据源没有提供以下数据（缺失数据置0）：', *lines]
 
 async def get_pjsk_detail_card_stats(ctx: SekaiHandlerContext, profile: dict) -> dict:
     user_cards = profile.get('userCards', [])
@@ -545,7 +548,7 @@ async def build_pjsk_detail_deck_panel(
     cards = await ctx.md.cards.collect_by_ids(card_ids)
     card_map = {card['id']: card for card in cards}
     with VSplit().set_content_align('lt').set_item_align('lt').set_sep(12).set_padding(16).set_bg(roundrect_bg()) as ret:
-        TextBox("卡面", section_title_style)
+        TextBox("当前编组与卡面统计", section_title_style)
         with HSplit().set_content_align('c').set_item_align('c').set_sep(8):
             for pcard in pcards:
                 card = card_map.get(pcard['cardId'])
@@ -736,6 +739,11 @@ async def compose_pjsk_detail_image(ctx: SekaiHandlerContext, qid: int) -> Image
                     (await get_detailed_profile_card(ctx, profile, err_msg)).set_w(left_col_1_w).set_h(top_row_h)
                     (await build_profile_play_section(ctx, basic_profile, profile, compact=True)).set_w(left_col_2_w).set_h(top_row_h)
 
+                if missing_lines:
+                    with VSplit().set_content_align('l').set_item_align('l').set_sep(4).set_padding((12, 8)).set_w(left_total_w).set_bg(roundrect_bg(fill=(255, 240, 240, 220))):
+                        for line in missing_lines:
+                            TextBox(line, red_style, use_real_line_count=True)
+
                 with HSplit().set_content_align('lt').set_item_align('lt').set_sep(16):
                     (await build_pjsk_detail_deck_panel(
                         ctx,
@@ -771,10 +779,6 @@ async def compose_pjsk_detail_image(ctx: SekaiHandlerContext, qid: int) -> Image
                 with VSplit().set_content_align('lt').set_item_align('lt').set_sep(12).set_w(left_total_w):
                     TextBox("加成信息", section_title_style).set_padding((8, 0))
                     (await build_power_bonus_detail_section(ctx, profile)).set_w(left_total_w)
-                if missing_lines:
-                    with VSplit().set_content_align('l').set_item_align('l').set_sep(4).set_padding((12, 8)).set_w(left_total_w).set_bg(roundrect_bg(fill=(255, 240, 240, 220))):
-                        for line in missing_lines:
-                            TextBox(line, red_style, use_real_line_count=True)
 
             with VSplit().set_content_align('lt').set_item_align('lt').set_sep(12).set_w(right_col_w):
                 TextBox("挑战信息", section_title_style).set_padding((8, 0))
