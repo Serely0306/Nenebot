@@ -501,7 +501,7 @@ async def build_pjsk_detail_value_panel(
         TextBox(title, section_title_style)
         with Grid(col_count=col_count).set_content_align('l').set_item_align('l').set_sep(10, 10):
             for item_title, item_value, res_type in items:
-                with VSplit().set_content_align('l').set_item_align('l').set_sep(5).set_padding(10).set_size(item_size).set_bg(roundrect_bg(fill=(255, 255, 255, 180))):
+                with VSplit().set_content_align('l').set_item_align('l').set_sep(5).set_padding(10).set_size(item_size).set_bg(roundrect_bg(fill=(255, 255, 255, 60))):
                     with HSplit().set_content_align('l').set_item_align('c').set_sep(8):
                         if res_type:
                             icon_id = 1 if res_type == 'boost_item' else None
@@ -524,7 +524,7 @@ async def build_pjsk_detail_material_panel(
         TextBox(title, section_title_style)
         with Grid(col_count=col_count).set_content_align('l').set_item_align('l').set_sep(12, 12):
             for item in material_items:
-                with HSplit().set_content_align('l').set_item_align('c').set_sep(8).set_padding(12).set_size(item_size).set_bg(roundrect_bg(fill=(255, 255, 255, 180))):
+                with HSplit().set_content_align('l').set_item_align('c').set_sep(8).set_padding(12).set_size(item_size).set_bg(roundrect_bg(fill=(255, 255, 255, 60))):
                     ImageBox(item['icon'], size=(32, 32))
                     with VSplit().set_content_align('l').set_item_align('l').set_sep(2):
                         TextBox(item['name'], text_style).set_w(item_size[0] - 76).set_overflow('clip')
@@ -567,7 +567,7 @@ async def build_pjsk_detail_deck_panel(
                 ImageBox(thumb, size=(thumb_size, thumb_size), image_size_mode='fill', shadow=True)
         with Grid(col_count=col_count).set_content_align('l').set_item_align('l').set_sep(10, 10):
             for item_title, item_value, _ in card_stat_items:
-                with VSplit().set_content_align('l').set_item_align('l').set_sep(4).set_padding(10).set_size(stat_item_size).set_bg(roundrect_bg(fill=(255, 255, 255, 180))):
+                with VSplit().set_content_align('l').set_item_align('l').set_sep(4).set_padding(10).set_size(stat_item_size).set_bg(roundrect_bg(fill=(255, 255, 255, 60))):
                     TextBox(item_title, item_title_style.replace(size=16)).set_overflow('clip')
                     TextBox(str(item_value), item_value_style.replace(size=20))
     return ret

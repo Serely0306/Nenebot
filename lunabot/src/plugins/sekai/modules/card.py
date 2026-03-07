@@ -254,7 +254,7 @@ async def build_card_material_cost_section(
                         quantity = materials.get(material_id, 0)
                         if not show_zero and quantity == 0:
                             continue
-                        with HSplit().set_content_align("c").set_item_align("c").set_sep(8).set_padding((10, 8)).set_size(chip_size).set_bg(roundrect_bg(fill=(255, 255, 255, 180))):
+                        with HSplit().set_content_align("c").set_item_align("c").set_sep(8).set_padding((10, 8)).set_size(chip_size).set_bg(roundrect_bg(fill=(255, 255, 255, 60))):
                             ImageBox(await get_res_icon(ctx, "material", material_id), size=(28, 28), use_alphablend=True)
                             TextBox(f"x{quantity}", quantity_style).set_w(chip_size[0] - 64).set_overflow("clip")
     return ret
@@ -286,7 +286,7 @@ async def compose_owned_card_material_summary_image(ctx: SekaiHandlerContext, qi
     material_chip_size = (188, 48)
 
     def build_stat_box(label: str, value) -> Frame:
-        with Frame().set_bg(roundrect_bg(fill=(255, 255, 255, 180))).set_padding((14, 10)) as box:
+        with Frame().set_bg(roundrect_bg(fill=(255, 255, 255, 60))).set_padding((14, 10)) as box:
             with VSplit().set_content_align("l").set_item_align("l").set_sep(6):
                 TextBox(label, label_style)
                 TextBox(str(value), value_style)
