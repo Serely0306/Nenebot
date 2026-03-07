@@ -533,7 +533,7 @@ async def build_pjsk_detail_material_panel(
 
 async def build_pjsk_detail_deck_panel(
     ctx: SekaiHandlerContext,
-    profile: dict,
+    basic_profile: dict,
     card_stat_items: list[tuple[str, int, str | None]],
     section_title_style: TextStyle,
     item_title_style: TextStyle,
@@ -543,10 +543,12 @@ async def build_pjsk_detail_deck_panel(
     stat_item_size: tuple[int, int] = (146, 76),
     thumb_size: int = 84,
 ) -> Frame:
-    # 当前编组和卡牌汇总放在同一块，方便和右侧资源区做等高布局。
-    deck_id = profile['userGamedata']['deck']
-    deck = find_by(profile.get('userDecks', []), 'deckId', deck_id) or {}
-    pcards = [find_by(profile.get('userCards', []), 'cardId', deck.get(f'member{i}')) for i in range(1, 6)]
+    # 五张卡面改为和 profile 接口一致，直接使用 userDeck + userCards。
+    deck = basic_profile.get('userDeck', {}) or {}
+    pcards = [
+        find_by(basic_profile.get('userCards', []), 'cardId', deck.get(f'member{i}'))
+        for i in range(1, 6)
+    ]
     pcards = [pcard for pcard in pcards if pcard]
     for pcard in pcards:
         pcard['after_training'] = pcard['defaultImage'] == "special_training" and pcard['specialTrainingStatus'] == "done"
