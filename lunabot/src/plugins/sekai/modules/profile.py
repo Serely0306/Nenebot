@@ -981,12 +981,12 @@ async def build_profile_play_section(
                 'allPerfect': 0,
             } for diff in DIFF_COLORS.keys()
         ]
-    # pjsk detail 复用时收紧统计网格，减少右侧留白。
+    # pjsk detail 复用时收紧统计网格，并保持内容从顶部开始排布。
     hs, vs = (6, 10) if compact else (8, 12)
     gw, gh = (72, 22) if compact else (82, 24)
     padding = 14 if compact else 28
     split_sep = 8 if compact else 12
-    with HSplit().set_content_align('c').set_item_align('t').set_sep(split_sep).set_bg(ui_bg).set_padding(padding) as ret:
+    with HSplit().set_content_align('lt').set_item_align('t').set_sep(split_sep).set_bg(ui_bg).set_padding(padding) as ret:
         with VSplit().set_sep(vs):
             Spacer(gh, gh)
             ImageBox(ctx.static_imgs.get("icon_clear.png"), size=(gh, gh))

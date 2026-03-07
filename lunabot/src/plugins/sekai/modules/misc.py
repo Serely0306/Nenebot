@@ -399,7 +399,8 @@ async def get_pjsk_detail_card_stats(ctx: SekaiHandlerContext, profile: dict) ->
         'rarity_3': 0,
         'birthday': 0,
         'limited': 0,
-        'fes': 0,
+        'cfes': 0,
+        'bfes': 0,
         'msr5': 0,
     }
 
@@ -421,10 +422,16 @@ async def get_pjsk_detail_card_stats(ctx: SekaiHandlerContext, profile: dict) ->
             stats['msr5'] += 1
 
         supply_type = await get_card_supply_type(ctx, user_card['cardId'])
+        if rarity not in ('rarity_4'):
+            continue
         if supply_type in limited_types:
             stats['limited'] += 1
-        elif supply_type in fes_types:
-            stats['fes'] += 1
+        elif supply_type == 'colorful_festival_limited':
+            stats['limited'] += 1
+            stats['cfes'] += 1
+        elif supply_type == 'bloom_festival_limited':
+            stats['limited'] += 1
+            stats['bfes'] += 1
     return stats
 
 async def get_pjsk_detail_total_boost_energy(ctx: SekaiHandlerContext, profile: dict) -> int:
@@ -695,12 +702,11 @@ async def compose_pjsk_detail_image(ctx: SekaiHandlerContext, qid: int) -> Image
     charged = profile.get('userChargedCurrency', {})
     summary_items = [
         ("金币", user_gamedata.get('coin', 0), 'coin'),
-        ("等级", user_gamedata.get('rank', 0), None),
         ("虚拟币", user_gamedata.get('virtualCoin', 0), 'virtual_coin'),
+        ("演出能量", total_boost_energy, 'boost_item'),
         ("免费水晶", charged.get('free', 0), 'jewel'),
         ("付费水晶", charged.get('paid', 0), 'paid_jewel'),
         ("总水晶", charged.get('free', 0) + charged.get('paid', 0), 'jewel'),
-        ("演出能量", total_boost_energy, 'boost_item'),
     ]
     card_stat_items = [
         ("总卡数", card_stats['total'], None),
@@ -708,7 +714,7 @@ async def compose_pjsk_detail_image(ctx: SekaiHandlerContext, qid: int) -> Image
         ("三星", card_stats['rarity_3'], None),
         ("生日", card_stats['birthday'], None),
         ("限定", card_stats['limited'], None),
-        ('Fes/BFes', card_stats['fes'], None),
+        ('CFes/BFes', f"{card_stats['cfes']}/{card_stats['bfes']}", None),
         ('MSR5', card_stats['msr5'], None),
     ]
 
@@ -721,8 +727,11 @@ async def compose_pjsk_detail_image(ctx: SekaiHandlerContext, qid: int) -> Image
     left_col_1_w = 560
     left_col_2_w = 620
     left_total_w = left_col_1_w + left_col_2_w + 16
-    top_row_h = 210
     second_row_h = 340
+    # 先用临时 section 测量自然高度，再在布局容器内重新创建正式控件。
+    temp_profile_card = await get_detailed_profile_card(ctx, profile, err_msg)
+    temp_play_panel = await build_profile_play_section(ctx, basic_profile, profile, compact=True)
+    top_row_h = max(temp_profile_card._get_self_size()[1], temp_play_panel._get_self_size()[1])
     leader_panel = await build_pjsk_detail_leader_panel(ctx, profile, section_title_style)
     leader_img = await render_frame_to_image(leader_panel)
     right_col_w = leader_img.width
@@ -747,13 +756,13 @@ async def compose_pjsk_detail_image(ctx: SekaiHandlerContext, qid: int) -> Image
                 with HSplit().set_content_align('lt').set_item_align('lt').set_sep(16):
                     (await build_pjsk_detail_deck_panel(
                         ctx,
-                        profile,
+                        basic_profile,
                         card_stat_items,
                         section_title_style,
                         item_title_style,
                         item_value_style,
                         col_count=4,
-                        stat_item_size=(108, 70),
+                        stat_item_size=(116, 70),
                         thumb_size=78,
                     )).set_w(left_col_1_w).set_h(second_row_h)
                     (await build_pjsk_detail_value_panel(
