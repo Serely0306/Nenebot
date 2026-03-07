@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from ...utils import *
 from ...llm import translate_text, ChatSession, get_model_preset, ChatSessionResponse
 from ..common import *
@@ -21,6 +23,7 @@ from .event import (
     extract_ban_event,
     get_card_supply_type,
 )
+from .resbox import get_res_icon
 
 
 SEARCH_SINGLE_CARD_HELP = """
@@ -59,6 +62,331 @@ class SkillEffectInfo:
 class SkillInfo:
     type: str
     detail: str
+
+
+CARD_MATERIAL_RARITY_ORDER = [
+    "rarity_1",
+    "rarity_2",
+    "rarity_3",
+    "rarity_birthday",
+    "rarity_4",
+]
+
+CARD_MATERIAL_RARITY_LABELS = {
+    "rarity_1": "1星",
+    "rarity_2": "2星",
+    "rarity_3": "3星",
+    "rarity_birthday": "生日",
+    "rarity_4": "4星",
+}
+
+CARD_MATERIAL_PART_LABELS = {
+    "first_part": "前篇",
+    "second_part": "后篇",
+}
+
+CARD_MATERIAL_FRAGMENT_IDS = [1, 2, 3, 4, 5]
+CARD_MATERIAL_CRYSTAL_IDS = [6, 7, 8, 9, 10]
+CARD_MATERIAL_MIRACLE_ID = 14
+
+
+def build_card_material_level_exp_map(levels: list[dict]) -> dict[int, int]:
+    return {
+        item["level"]: item["totalExp"]
+        for item in levels
+        if item["levelType"] == "card"
+    }
+
+
+def get_card_material_target_level(rarity_info: dict) -> int:
+    return rarity_info.get("trainingMaxLevel", rarity_info["maxLevel"])
+
+
+def get_card_material_current_total_exp(user_card: dict, level_exp_map: dict[int, int]) -> int:
+    if "totalExp" in user_card:
+        return user_card["totalExp"]
+    return level_exp_map.get(user_card.get("level", 1), 0)
+
+
+def build_empty_card_material_summary() -> dict:
+    return {
+        "owned_count": 0,
+        "remaining_exp": 0,
+        "remaining_special_training_cards": 0,
+        "remaining_special_training_materials": defaultdict(int),
+        "episodes": {
+            "first_part": {
+                "remaining_count": 0,
+                "materials": defaultdict(int),
+            },
+            "second_part": {
+                "remaining_count": 0,
+                "materials": defaultdict(int),
+            },
+        },
+    }
+
+
+def add_card_material_costs(target: defaultdict, costs: list[dict]) -> None:
+    for cost in costs:
+        if cost.get("resourceType") != "material":
+            continue
+        resource_id = cost["resourceId"]
+        target[resource_id] += cost["quantity"]
+
+
+def build_owned_card_material_summary(
+    user_cards: list[dict],
+    cards_by_id: dict[int, dict],
+    episodes_by_id: dict[int, dict],
+    rarity_info_map: dict[str, dict],
+    level_exp_map: dict[int, int],
+) -> tuple[dict, dict]:
+    summary = {
+        rarity: build_empty_card_material_summary()
+        for rarity in CARD_MATERIAL_RARITY_ORDER
+    }
+
+    for user_card in user_cards:
+        card = cards_by_id.get(user_card["cardId"])
+        if not card:
+            continue
+        rarity = card["cardRarityType"]
+        if rarity not in summary:
+            continue
+
+        rarity_info = rarity_info_map[rarity]
+        rarity_summary = summary[rarity]
+        rarity_summary["owned_count"] += 1
+
+        target_level = get_card_material_target_level(rarity_info)
+        target_total_exp = level_exp_map[target_level]
+        current_total_exp = get_card_material_current_total_exp(user_card, level_exp_map)
+        rarity_summary["remaining_exp"] += max(target_total_exp - current_total_exp, 0)
+
+        if card.get("specialTrainingCosts") and user_card.get("specialTrainingStatus") != "done":
+            rarity_summary["remaining_special_training_cards"] += 1
+            add_card_material_costs(
+                rarity_summary["remaining_special_training_materials"],
+                [item["cost"] for item in card["specialTrainingCosts"]],
+            )
+
+        for episode_state in user_card.get("episodes", []):
+            if episode_state.get("scenarioStatus") == "already_read":
+                continue
+            episode = episodes_by_id.get(episode_state["cardEpisodeId"])
+            if not episode:
+                continue
+            part = episode["cardEpisodePartType"]
+            rarity_summary["episodes"][part]["remaining_count"] += 1
+            add_card_material_costs(
+                rarity_summary["episodes"][part]["materials"],
+                episode["costs"],
+            )
+
+    total = build_empty_card_material_summary()
+    for rarity in summary.values():
+        total["owned_count"] += rarity["owned_count"]
+        total["remaining_exp"] += rarity["remaining_exp"]
+        total["remaining_special_training_cards"] += rarity["remaining_special_training_cards"]
+        for name, quantity in rarity["remaining_special_training_materials"].items():
+            total["remaining_special_training_materials"][name] += quantity
+        for part in CARD_MATERIAL_PART_LABELS:
+            total["episodes"][part]["remaining_count"] += rarity["episodes"][part]["remaining_count"]
+            for name, quantity in rarity["episodes"][part]["materials"].items():
+                total["episodes"][part]["materials"][name] += quantity
+
+    return summary, total
+
+
+async def get_owned_card_material_summary_data(ctx: SekaiHandlerContext, user_cards: list[dict]) -> tuple[dict, dict]:
+    card_ids = sorted({item["cardId"] for item in user_cards})
+    episode_ids = sorted({
+        episode["cardEpisodeId"]
+        for item in user_cards
+        for episode in item.get("episodes", [])
+    })
+    cards, episodes, rarities, levels = await batch_gather(
+        ctx.md.cards.collect_by_ids(card_ids),
+        ctx.md.card_episodes.collect_by_ids(episode_ids),
+        ctx.md.card_rarities.get(),
+        ctx.md.levels.get(),
+    )
+    cards_by_id = {item["id"]: item for item in cards}
+    episodes_by_id = {item["id"]: item for item in episodes}
+    rarity_info_map = {item["cardRarityType"]: item for item in rarities}
+    level_exp_map = build_card_material_level_exp_map(levels)
+    return build_owned_card_material_summary(user_cards, cards_by_id, episodes_by_id, rarity_info_map, level_exp_map)
+
+
+async def build_card_material_cost_section(
+    ctx: SekaiHandlerContext,
+    title: str,
+    section_key: str,
+    materials: dict[int, int],
+    *,
+    width: int,
+    title_style: TextStyle,
+    quantity_style: TextStyle,
+    chip_size: tuple[int, int] = (188, 48),
+    show_zero: bool = True,
+) -> Frame | None:
+    if not materials:
+        if section_key not in {"first_part", "second_part", "special_training"}:
+            return None
+
+    row_ids = []
+    if section_key == "first_part":
+        row_ids = [CARD_MATERIAL_FRAGMENT_IDS]
+    elif section_key == "second_part":
+        row_ids = [CARD_MATERIAL_FRAGMENT_IDS, CARD_MATERIAL_CRYSTAL_IDS + [CARD_MATERIAL_MIRACLE_ID]]
+    elif section_key == "special_training":
+        row_ids = [CARD_MATERIAL_CRYSTAL_IDS + [CARD_MATERIAL_MIRACLE_ID]]
+    else:
+        row_ids = [sorted(materials)]
+
+    with VSplit().set_content_align("lt").set_item_align("lt").set_sep(8).set_w(width) as ret:
+        TextBox(title, title_style)
+        with VSplit().set_content_align("lt").set_item_align("lt").set_sep(8):
+            for row in row_ids:
+                with HSplit().set_content_align("l").set_item_align("l").set_sep(8):
+                    for material_id in row:
+                        quantity = materials.get(material_id, 0)
+                        if not show_zero and quantity == 0:
+                            continue
+                        with HSplit().set_content_align("c").set_item_align("c").set_sep(8).set_padding((10, 8)).set_size(chip_size).set_bg(roundrect_bg(fill=(255, 255, 255, 180))):
+                            ImageBox(await get_res_icon(ctx, "material", material_id), size=(28, 28), use_alphablend=True)
+                            TextBox(f"x{quantity}", quantity_style).set_w(chip_size[0] - 64).set_overflow("clip")
+    return ret
+
+
+async def compose_owned_card_material_summary_image(ctx: SekaiHandlerContext, qid: int) -> Image.Image:
+    # 只依赖 suite 的 userCards 和资料卡头部所需字段。
+    profile, err_msg = await get_detailed_profile(
+        ctx,
+        qid,
+        raise_exc=True,
+        filter=get_detailed_profile_card_filter(),
+    )
+    assert_and_reply(profile and profile.get("userCards"), "你的Suite数据源没有提供userCards数据")
+    summary, total = await get_owned_card_material_summary_data(ctx, profile["userCards"])
+
+    title_style = TextStyle(font=DEFAULT_BOLD_FONT, size=28, color=(20, 20, 20))
+    section_style = TextStyle(font=DEFAULT_BOLD_FONT, size=28, color=(30, 30, 30))
+    rarity_count_style = TextStyle(font=DEFAULT_BOLD_FONT, size=24, color=(60, 60, 60))
+    subsection_style = TextStyle(font=DEFAULT_BOLD_FONT, size=18, color=(70, 70, 70))
+    label_style = TextStyle(font=DEFAULT_BOLD_FONT, size=20, color=(60, 60, 60))
+    value_style = TextStyle(font=DEFAULT_BOLD_FONT, size=24, color=(35, 35, 35))
+    text_style = TextStyle(font=DEFAULT_FONT, size=18, color=(70, 70, 70))
+    tip_style = TextStyle(font=DEFAULT_FONT, size=18, color=(80, 80, 80))
+
+    panel_w = 1240
+    summary_box_w = 204
+    summary_stat_box_size = (204, 82)
+    material_chip_size = (188, 48)
+
+    def build_stat_box(label: str, value) -> Frame:
+        with Frame().set_bg(roundrect_bg(fill=(255, 255, 255, 180))).set_padding((14, 10)) as box:
+            with VSplit().set_content_align("l").set_item_align("l").set_sep(6):
+                TextBox(label, label_style)
+                TextBox(str(value), value_style)
+        return box
+
+    with Canvas(bg=SEKAI_BLUE_BG).set_padding(BG_PADDING) as canvas:
+        with VSplit().set_content_align("lt").set_item_align("lt").set_sep(16):
+            # 顶部继续复用现有 suite 简易资料卡，和其他个人类图片保持一致。
+            (await get_detailed_profile_card(ctx, profile, err_msg)).set_w(panel_w)
+
+            with VSplit().set_bg(roundrect_bg()).set_padding(16).set_sep(12).set_w(panel_w).set_content_align("lt").set_item_align("lt"):
+                TextBox("卡面养成材料统计", title_style)
+                TextBox("按当前卡面等级、剧情阅读和特训状态统计到满育的剩余材料。", tip_style)
+                with Grid(col_count=5).set_content_align("l").set_item_align("l").set_sep(10, 10):
+                    build_stat_box("持有卡面", total["owned_count"]).set_size(summary_stat_box_size)
+                    build_stat_box("剩余经验", total["remaining_exp"]).set_size(summary_stat_box_size)
+                    build_stat_box("未特训卡", total["remaining_special_training_cards"]).set_size(summary_stat_box_size)
+                    build_stat_box("前篇未完成", total["episodes"]["first_part"]["remaining_count"]).set_size(summary_stat_box_size)
+                    build_stat_box("后篇未完成", total["episodes"]["second_part"]["remaining_count"]).set_size(summary_stat_box_size)
+                total_first_part_section = await build_card_material_cost_section(
+                    ctx,
+                    "总计前篇",
+                    "first_part",
+                    total["episodes"]["first_part"]["materials"],
+                    width=panel_w - 32,
+                    title_style=subsection_style,
+                    quantity_style=text_style,
+                    chip_size=material_chip_size,
+                )
+                if total_first_part_section:
+                    total_first_part_section
+                total_second_part_section = await build_card_material_cost_section(
+                    ctx,
+                    "总计后篇",
+                    "second_part",
+                    total["episodes"]["second_part"]["materials"],
+                    width=panel_w - 32,
+                    title_style=subsection_style,
+                    quantity_style=text_style,
+                    chip_size=material_chip_size,
+                )
+                if total_second_part_section:
+                    total_second_part_section
+
+            for rarity in CARD_MATERIAL_RARITY_ORDER:
+                item = summary[rarity]
+                with VSplit().set_bg(roundrect_bg()).set_padding(16).set_sep(12).set_w(panel_w).set_content_align("lt").set_item_align("lt"):
+                    with HSplit().set_content_align("l").set_item_align("c").set_sep(10):
+                        TextBox(CARD_MATERIAL_RARITY_LABELS[rarity], section_style)
+                        TextBox(f"持有 {item['owned_count']} 张", rarity_count_style)
+
+                    with Grid(col_count=5).set_content_align("l").set_item_align("l").set_sep(10, 10):
+                        build_stat_box("持有卡面", item["owned_count"]).set_size(summary_stat_box_size)
+                        build_stat_box("剩余经验", item["remaining_exp"]).set_size(summary_stat_box_size)
+                        build_stat_box("未特训卡", item["remaining_special_training_cards"]).set_size(summary_stat_box_size)
+                        build_stat_box("前篇未完成", item["episodes"]["first_part"]["remaining_count"]).set_size(summary_stat_box_size)
+                        build_stat_box("后篇未完成", item["episodes"]["second_part"]["remaining_count"]).set_size(summary_stat_box_size)
+
+                    first_part_section = await build_card_material_cost_section(
+                        ctx,
+                        "前篇",
+                        "first_part",
+                        item["episodes"]["first_part"]["materials"],
+                        width=panel_w - 32,
+                        title_style=subsection_style,
+                        quantity_style=text_style,
+                        chip_size=material_chip_size,
+                    )
+                    if first_part_section:
+                        first_part_section
+
+                    second_part_section = await build_card_material_cost_section(
+                        ctx,
+                        "后篇",
+                        "second_part",
+                        item["episodes"]["second_part"]["materials"],
+                        width=panel_w - 32,
+                        title_style=subsection_style,
+                        quantity_style=text_style,
+                        chip_size=material_chip_size,
+                    )
+                    if second_part_section:
+                        second_part_section
+
+                    if rarity in {"rarity_3", "rarity_4"}:
+                        training_section = await build_card_material_cost_section(
+                            ctx,
+                            "特训",
+                            "special_training",
+                            item["remaining_special_training_materials"],
+                            width=panel_w - 32,
+                            title_style=subsection_style,
+                            quantity_style=text_style,
+                            chip_size=material_chip_size,
+                        )
+                        if training_section:
+                            training_section
+
+    add_watermark(canvas)
+    return await canvas.get_img()
 
 
 DETAIL_SKILL_KEYWORDS_IDS = [
@@ -1177,6 +1505,22 @@ async def _(ctx: SekaiHandlerContext):
     
     await ctx.asend_reply_msg(await get_image_cq(
         await compose_box_image(ctx, ctx.user_id, cards, show_id, show_box, use_after_training),
+        low_quality=True,
+    ))
+
+
+# 查看当前绑定账号全部卡面的剩余满育材料统计。
+pjsk_card_material = SekaiCmdHandler([
+    "/pjsk card material",
+    "/卡牌材料统计", "/卡面材料统计", "/卡牌养成材料", "/卡面养成材料","/卡面养成",
+])
+pjsk_card_material.check_cdrate(cd).check_wblist(gbl)
+@pjsk_card_material.handle()
+async def _(ctx: SekaiHandlerContext):
+    args = ctx.get_args().strip()
+    assert_and_reply(not args, "该指令暂无额外参数")
+    await ctx.asend_reply_msg(await get_image_cq(
+        await compose_owned_card_material_summary_image(ctx, ctx.user_id),
         low_quality=True,
     ))
 
