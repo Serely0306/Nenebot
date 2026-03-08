@@ -15,42 +15,37 @@ type WsClient struct {
 	Name      string
 	conn      *websocket.Conn
 	filter    *Filter
-	readChan  chan WsMsg //从bot应用端读取到的消息
-	writeChan chan WsMsg //写入到bot应用端的消息
+	readChan  chan WsMsg
+	writeChan chan WsMsg
 }
 
-// 连接到反向ws服务端，转发消息，并使用过滤器
 func WsClientHandler(wss *WsServer, cfg BotAppsConfig) {
-	//检查配置
-	err := cfg.Check()
-	if err != nil {
-		log.Printf("%s的配置有问题: %v\n", cfg.Name, err)
+	if err := cfg.Check(); err != nil {
+		log.Printf("%s 的配置有问题：%v\n", cfg.Name, err)
 		return
 	}
-	//filter
+
 	filter := (&Filter{Name: cfg.Name}).Compile(cfg)
 	AddFilter(filter)
 	defer RemoveFilter(filter.Name)
-	//client
-	for { //循环重连，转发消息
-		// 等待Bot ID被设置（从OneBot客户端连接中自动获取）
+
+	for {
 		for wss.BotId == "" && CONFIG.Server.BotId == "" {
-			log.Printf("等待OneBot客户端连接以获取Bot ID...\n")
+			log.Printf("等待 OneBot 客户端连接以获取 Bot ID...\n")
 			time.Sleep(time.Duration(CONFIG.Server.SleepTime) * time.Second)
 		}
 
-		//onebot header（每次重连时刷新，使用最新的BotId）
 		header := http.Header{}
-		botId := wss.BotId
-		if botId == "" {
-			botId = CONFIG.Server.BotId
+		botID := wss.BotId
+		if botID == "" {
+			botID = CONFIG.Server.BotId
 		}
-		header.Set("x-self-id", botId)
+		header.Set("x-self-id", botID)
 		header.Set("authorization", fmt.Sprintf("Bearer %s", cfg.AccessToken))
 		header.Set("user-agent", CONFIG.Server.UserAgent)
 		header.Set("x-client-role", "Universal")
 
-		log.Printf("正在连接：%s (Bot ID: %s)\n", cfg.Name, botId)
+		log.Printf("正在连接 %s (Bot ID: %s)\n", cfg.Name, botID)
 
 		dialer := &websocket.Dialer{
 			Proxy:            http.ProxyFromEnvironment,
@@ -60,10 +55,11 @@ func WsClientHandler(wss *WsServer, cfg BotAppsConfig) {
 		}
 		conn, _, err := dialer.Dial(cfg.Uri, header)
 		if err != nil {
-			log.Printf("连接%s异常: %v\n", cfg.Name, err)
+			log.Printf("连接 %s 失败：%v\n", cfg.Name, err)
 			time.Sleep(time.Duration(CONFIG.Server.SleepTime) * time.Second)
 			continue
 		}
+
 		client := &WsClient{
 			Name:      cfg.Name,
 			conn:      conn,
@@ -71,40 +67,45 @@ func WsClientHandler(wss *WsServer, cfg BotAppsConfig) {
 			readChan:  make(chan WsMsg, 128),
 			writeChan: make(chan WsMsg, 128),
 		}
-		err = wss.AddWsClient(client) //添加到客户端列表
-		if err != nil {
-			log.Printf("连接%s异常: %v\n", cfg.Name, err)
+		if err := wss.AddWsClient(client); err != nil {
+			log.Printf("注册客户端 %s 失败：%v\n", cfg.Name, err)
 			client.conn.Close()
 			time.Sleep(time.Duration(CONFIG.Server.SleepTime) * time.Second)
 			continue
 		}
-		ctx, ctxCancel := context.WithCancel(context.Background())
+
+		ctx, cancel := context.WithCancel(context.Background())
 		go client.readLoop(ctx, wss)
 		go client.writeLoop(ctx)
-		log.Printf("已连接到：%s，加载的过滤器：%s\n", cfg.Name, filter.String())
+
+		log.Printf("已连接到 %s，加载的过滤器：%s\n", cfg.Name, filter.String())
+
 		for {
 			mt, msg, err := client.conn.ReadMessage()
 			if err != nil {
-				log.Printf("从%s读取消息出错：%v\n", cfg.Name, err)
-				client.conn.Close()             //关闭客户端
-				wss.RemoveWsClient(client.Name) //从客户端列表中删除
+				log.Printf("从 %s 读取消息失败：%v\n", cfg.Name, err)
+				client.conn.Close()
+				wss.RemoveWsClient(client.Name)
 				time.Sleep(5 * time.Second)
 				break
 			}
 			client.readChan <- WsMsg{mt, msg}
 		}
-		client.close(ctxCancel)
+
+		client.close(cancel)
 	}
 }
+
 func (wc *WsClient) WriteMessage(mt int, msg []byte) error {
 	if wc.conn == nil {
-		return errors.New("没有连接到bot应用端")
+		return errors.New("尚未连接到 bot 应用端")
 	}
 	wc.writeChan <- WsMsg{mt, msg}
 	return nil
 }
-func (wc *WsClient) close(ctxCancel context.CancelFunc) {
-	ctxCancel()
+
+func (wc *WsClient) close(cancel context.CancelFunc) {
+	cancel()
 	if wc.conn != nil {
 		wc.conn.Close()
 	}
@@ -117,9 +118,8 @@ func (wc *WsClient) readLoop(ctx context.Context, wss *WsServer) {
 	for {
 		select {
 		case msg := <-wc.readChan:
-			// 转发给OneBot客户端
 			if err := wss.WriteMessage(msg.MsgType, msg.MsgData); err != nil {
-				log.Println("写入到OneBot客户端出错：", err)
+				log.Println("写入 OneBot 客户端失败：", err)
 			}
 		case <-ctx.Done():
 			return
@@ -127,50 +127,33 @@ func (wc *WsClient) readLoop(ctx context.Context, wss *WsServer) {
 	}
 }
 
-// 处理发送给bot应用端的消息
 func (wc *WsClient) writeLoop(ctx context.Context) {
 	for {
 		select {
 		case msg := <-wc.writeChan:
 			if msg.MsgType == websocket.TextMessage {
-				// 解析onebot的消息
 				onebotMessage := ParseOneBotMessage(msg.MsgData)
 				if onebotMessage == nil {
-					// 解析出错的消息也直接放行
 					if err := wc.conn.WriteMessage(msg.MsgType, msg.MsgData); err != nil {
-						log.Printf("向%s发送消息出错：%v\n", wc.Name, err)
+						log.Printf("向 %s 转发原始文本消息失败：%v\n", wc.Name, err)
 					}
 					continue
 				}
 
-				// 检查是否为命令响应
-				if onebotMessage.Partial.IsCommandResponse {
-					// 命令响应应该被过滤，不发送给bot应用端
-					// 命令响应已经在handleCommand中处理了
-					if CONFIG.Server.Debug {
-						log.Printf("%s：已跳过命令响应，不发送给bot应用端\n", wc.Name)
-					}
-					continue
-				}
-
-				// 通常的消息
 				if onebotMessage.Partial.RawMessage != "" {
 					if wc.filter.Filter(onebotMessage) {
-						// 过滤器通过，发送
 						if err := wc.conn.WriteJSON(onebotMessage.Intact); err != nil {
-							log.Printf("向%s发送消息出错：%v\n", wc.Name, err)
+							log.Printf("向 %s 发送过滤后的消息失败：%v\n", wc.Name, err)
 						}
-					} else {
-						if CONFIG.Server.Debug {
-							log.Printf("%s：消息被过滤器阻止：%s\n", wc.Name, onebotMessage.Partial.RawMessage)
-						}
+					} else if CONFIG.Server.Debug {
+						log.Printf("%s：消息被过滤器阻止：%s\n", wc.Name, onebotMessage.Partial.RawMessage)
 					}
 					continue
 				}
 			}
-			// 其他消息直接放行
+
 			if err := wc.conn.WriteMessage(msg.MsgType, msg.MsgData); err != nil {
-				log.Printf("向%s发送消息出错：%v\n", wc.Name, err)
+				log.Printf("向 %s 转发消息失败：%v\n", wc.Name, err)
 			}
 		case <-ctx.Done():
 			return
