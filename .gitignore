@@ -61,3 +61,6 @@ catcher/config-android.yaml
 # local test files
 OneBotFilter/src/command_test.go
 OneBotFilter/src/filters_test.go
+upload/debug
+upload/tools
+upload/config.yaml
