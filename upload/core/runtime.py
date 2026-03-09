@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Lock
 
-from core.app_config import load_upload_config
+from core.app_config import UploadConfig, load_upload_config
 from services.sekai_assets import SekaiAssetRepository
 
 
@@ -46,5 +47,24 @@ DOWNLOAD_FILES = {
     "uninstall-catcher.sh": str(CATCHER_DIR / "scripts"),
 }
 
-UPLOAD_CONFIG = load_upload_config()
-MSR_REPO = SekaiAssetRepository(UPLOAD_CONFIG.msr.asset_request_timeout_seconds)
+_MSR_REPO_LOCK = Lock()
+_MSR_REPO_BY_TIMEOUT: dict[int, SekaiAssetRepository] = {}
+
+
+def get_upload_config() -> UploadConfig:
+    return load_upload_config()
+
+
+def get_msr_repo(config: UploadConfig | None = None) -> SekaiAssetRepository:
+    current_config = config or get_upload_config()
+    timeout = int(current_config.msr.asset_request_timeout_seconds)
+    with _MSR_REPO_LOCK:
+        repo = _MSR_REPO_BY_TIMEOUT.get(timeout)
+        if repo is None:
+            repo = SekaiAssetRepository(timeout)
+            _MSR_REPO_BY_TIMEOUT[timeout] = repo
+        return repo
+
+
+UPLOAD_CONFIG = get_upload_config()
+MSR_REPO = get_msr_repo(UPLOAD_CONFIG)

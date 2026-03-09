@@ -5,7 +5,13 @@ import json
 import requests as http_requests
 from flask import jsonify, request
 
-from core.runtime import LUNABOT_DATA_BASE, PROFILE_DB_PATH, REGION_NAMES, UPLOAD_CONFIG, VALID_REGIONS
+from core.runtime import (
+    LUNABOT_DATA_BASE,
+    PROFILE_DB_PATH,
+    REGION_NAMES,
+    VALID_REGIONS,
+    get_upload_config,
+)
 from services.crypto import DECRYPT_AVAILABLE
 from services.data import load_and_filter_json
 from services.profile import get_bind_info, mask_game_id
@@ -207,6 +213,7 @@ def register_query_routes(app):
 
     @app.route("/status", methods=["GET"])
     def status():
+        config = get_upload_config()
         return jsonify(
             {
                 "status": "ok",
@@ -216,7 +223,7 @@ def register_query_routes(app):
                 "profile_db_available": PROFILE_DB_PATH.exists(),
                 "msr_available": True,
                 "msr_access_key_configured": bool(
-                    UPLOAD_CONFIG.msr.access_key and UPLOAD_CONFIG.msr.access_key != "change-me"
+                    config.msr.access_key and config.msr.access_key != "change-me"
                 ),
             }
         )
