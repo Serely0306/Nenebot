@@ -31,6 +31,154 @@ def expand_compact_field(compact_data: dict) -> list:
     return result
 
 
+RESTORE_LIST_SCHEMAS = {
+    "userActionSets": ["id", "status"],
+    "userArchiveEventEpisodeStatuses": ["storyType", "episodeId", "status", "isNotSkipped"],
+    "userBillingShopItems": ["billingShopItemId", "count", "totalCount", "status"],
+    "userChallengeLiveSoloHighScoreRewards": ["characterId", "challengeLiveHighScoreRewardId", "challengeLiveHighScoreStatus"],
+    "userChallengeLiveSoloStages": ["challengeLiveStageType", "characterId", "challengeLiveStageId", "rank", "challengeLiveStageStatus", "point"],
+    "userCharacterProfileEpisodeStatuses": ["storyType", "episodeId", "status", "isNotSkipped"],
+    "userEventArchiveCompleteReadRewards": ["eventStoryId", "isDisplayEventArchiveCompleteReadProgress"],
+    "userEventEpisodeStatuses": ["storyType", "episodeId", "status", "isNotSkipped"],
+    "userEventExchanges": ["eventExchangeId", "exchangeRemaining"],
+    "userHonors": ["honorId", "level", "obtainedAt"],
+    "userMaterialExchanges": ["materialExchangeId", "exchangeRemaining"],
+    "userMysekaiCharacterTalks": ["mysekaiCharacterTalkId", "isRead"],
+    "userReleaseConditions": ["releaseConditionId", "createdAt"],
+    "userSekaiEchoCardMissions": ["storyId", "sekaiEchoCardMissionType", "progress"],
+    "userSpecialEpisodeStatuses": ["storyType", "episodeId", "status", "isNotSkipped"],
+    "userStamps": ["stampId", "obtainedAt"],
+    "userUnitEpisodeStatuses": ["storyType", "episodeId", "status", "isNotSkipped"],
+    "userWorldBloomSupportDecks": [
+        "eventId", "gameCharacterId",
+        "member1", "member2", "member3", "member4", "member5", "member6",
+        "member7", "member8", "member9", "member10", "member11", "member12",
+    ],
+    "userWorldBlooms": ["eventId", "gameCharacterId", "rank", "worldBloomChapterPoint", "worldBloomChapterPointUpdateAt"],
+}
+
+
+def _restore_list_field(data: dict, field: str, keys: list[str]):
+    items = data.get(field)
+    if not isinstance(items, list) or not items or not isinstance(items[0], list):
+        return
+    result = []
+    for item in items:
+        if not isinstance(item, list):
+            result.append(item)
+            continue
+        result.append({
+            key: item[i] if len(item) > i else None
+            for i, key in enumerate(keys)
+        })
+    data[field] = result
+
+
+def _restore_card_episodes(episodes):
+    if not isinstance(episodes, list) or not episodes or not isinstance(episodes[0], list):
+        return episodes
+    result = []
+    for episode in episodes:
+        item = {
+            "cardEpisodeId": episode[0] if len(episode) > 0 else None,
+            "scenarioStatus": episode[1] if len(episode) > 1 else None,
+            "isNotSkipped": episode[3] if len(episode) > 3 else False,
+        }
+        if len(episode) > 2 and episode[2] is not None:
+            item["scenarioStatusReasons"] = episode[2]
+        result.append(item)
+    return result
+
+
+def _restore_user_cards(data: dict):
+    cards = data.get("userCards")
+    if not isinstance(cards, list) or not cards or not isinstance(cards[0], list):
+        return
+    result = []
+    for card in cards:
+        result.append({
+            "cardId": card[0] if len(card) > 0 else None,
+            "level": card[1] if len(card) > 1 else 1,
+            "exp": card[2] if len(card) > 2 else 0,
+            "totalExp": card[3] if len(card) > 3 else 0,
+            "skillLevel": card[4] if len(card) > 4 else 1,
+            "skillExp": card[5] if len(card) > 5 else 0,
+            "totalSkillExp": card[6] if len(card) > 6 else 0,
+            "masterRank": card[7] if len(card) > 7 else 0,
+            "specialTrainingStatus": card[8] if len(card) > 8 else "not_doing",
+            "defaultImage": card[9] if len(card) > 9 else "original",
+            "duplicateCount": card[10] if len(card) > 10 else 0,
+            "createdAt": card[11] if len(card) > 11 else None,
+            "episodes": _restore_card_episodes(card[12] if len(card) > 12 else []),
+        })
+    data["userCards"] = result
+
+
+def _restore_user_shops(data: dict):
+    shops = data.get("userShops")
+    if not isinstance(shops, list) or not shops or not isinstance(shops[0], list):
+        return
+    result = []
+    for shop in shops:
+        if not isinstance(shop, list):
+            result.append(shop)
+            continue
+        user_shop_items = []
+        raw_items = shop[1] if len(shop) > 1 and isinstance(shop[1], list) else []
+        for item in raw_items:
+            if not isinstance(item, list):
+                user_shop_items.append(item)
+                continue
+            user_shop_items.append({
+                "shopItemId": item[0] if len(item) > 0 else None,
+                "level": item[1] if len(item) > 1 else None,
+                "status": item[2] if len(item) > 2 else None,
+            })
+        result.append({
+            "shopId": shop[0] if len(shop) > 0 else None,
+            "userShopItems": user_shop_items,
+        })
+    data["userShops"] = result
+
+
+def _restore_user_virtual_shops(data: dict):
+    shops = data.get("userVirtualShops")
+    if not isinstance(shops, list) or not shops or not isinstance(shops[0], list):
+        return
+    result = []
+    for shop in shops:
+        if not isinstance(shop, list):
+            result.append(shop)
+            continue
+        user_virtual_shop_items = []
+        raw_items = shop[1] if len(shop) > 1 and isinstance(shop[1], list) else []
+        for item in raw_items:
+            if not isinstance(item, list):
+                user_virtual_shop_items.append(item)
+                continue
+            user_virtual_shop_items.append({
+                "virtualShopId": item[0] if len(item) > 0 else None,
+                "virtualShopItemId": item[1] if len(item) > 1 else None,
+                "status": item[2] if len(item) > 2 else None,
+            })
+        result.append({
+            "virtualShopId": shop[0] if len(shop) > 0 else None,
+            "userVirtualShopItems": user_virtual_shop_items,
+        })
+    data["userVirtualShops"] = result
+
+
+def restore_suite_fields(data: dict) -> dict:
+    if not isinstance(data, dict):
+        return data
+    for field, keys in RESTORE_LIST_SCHEMAS.items():
+        _restore_list_field(data, field, keys)
+    _restore_user_cards(data)
+    _restore_user_shops(data)
+    _restore_user_virtual_shops(data)
+    return data
+
+
 def process_suite_compact(data: dict) -> dict:
     result = {}
     for key, value in data.items():
@@ -42,7 +190,7 @@ def process_suite_compact(data: dict) -> dict:
             print(f"  [compact] {key} -> {expanded_key}: {len(expanded)} 条")
         else:
             result[key] = value
-    return result
+    return restore_suite_fields(result)
 
 
 def extract_suite_user_id(data: dict) -> str | None:
