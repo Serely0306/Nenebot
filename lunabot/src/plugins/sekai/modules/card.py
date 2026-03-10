@@ -171,7 +171,7 @@ def build_owned_card_material_summary(
                 [item["cost"] for item in card["specialTrainingCosts"]],
             )
 
-        for episode_state in user_card.get("episodes", []):
+        for episode_state in (user_card.get("episodes") or []):
             if episode_state.get("scenarioStatus") == "already_read":
                 continue
             episode = episodes_by_id.get(episode_state["cardEpisodeId"])
@@ -204,7 +204,7 @@ async def get_owned_card_material_summary_data(ctx: SekaiHandlerContext, user_ca
     episode_ids = sorted({
         episode["cardEpisodeId"]
         for item in user_cards
-        for episode in item.get("episodes", [])
+        for episode in (item.get("episodes") or [])
     })
     cards, episodes, rarities, levels = await batch_gather(
         ctx.md.cards.collect_by_ids(card_ids),

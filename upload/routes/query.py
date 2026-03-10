@@ -106,7 +106,7 @@ def register_query_routes(app):
         local_err = None
         haruki_err = None
         local_path = LUNABOT_DATA_BASE / region / "suite" / f"{uid}.json"
-        haruki_unsupported_keys = {"userChargedCurrency", "userBoostItems"}
+        haruki_unsupported_keys = {"userChargedCurrency", "userBoostItems","userGachas"}
 
         def get_local_data():
             nonlocal local_err

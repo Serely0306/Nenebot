@@ -359,14 +359,7 @@ async def compose_area_item_upgrade_materials_image(ctx: SekaiHandlerContext, qi
     area_item_lv_materials: dict[int, dict[int, dict[int, int]]] = {}
     for item_id in item_ids:
         for lv, resbox_id in area_item_lv_shop_item_resbox_ids[item_id].items():
-            # 新版 master 偶尔会出现 resourceBoxes 与 shopItems 本地不同步，先按 resourceBoxId 查，失败再退回 id。
-            shop_item = await ctx.md.shop_items.find_by('resourceBoxId', resbox_id)
-            if not shop_item:
-                shop_item = await ctx.md.shop_items.find_by('id', resbox_id)
-            if not shop_item:
-                logger.warning(f"找不到区域道具升级所需的 shopItem: item_id={item_id} lv={lv} resbox_id={resbox_id}")
-                continue
-            for cost in shop_item.get('costs', []):
+            for cost in (await ctx.md.shop_items.find_by_id(resbox_id)).get('costs', []):
                 cost = cost['cost']
                 res_id = cost['resourceId']
                 if cost['resourceType'] == 'coin':

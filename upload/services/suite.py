@@ -75,6 +75,8 @@ def _restore_list_field(data: dict, field: str, keys: list[str]):
 
 
 def _restore_card_episodes(episodes):
+    if episodes is None:
+        return []
     if not isinstance(episodes, list) or not episodes or not isinstance(episodes[0], list):
         return episodes
     result = []
