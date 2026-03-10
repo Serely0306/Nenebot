@@ -141,6 +141,23 @@ def _restore_user_shops(data: dict):
     data["userShops"] = result
 
 
+def _restore_user_areas(data: dict):
+    areas = data.get("userAreas")
+    if not isinstance(areas, list) or not areas or not isinstance(areas[0], dict):
+        return
+    for area in areas:
+        action_sets = area.get("actionSets")
+        if not isinstance(action_sets, list) or not action_sets or not isinstance(action_sets[0], list):
+            continue
+        area["actionSets"] = [
+            {
+                "id": item[0] if len(item) > 0 else None,
+                "status": item[1] if len(item) > 1 else None,
+            }
+            for item in action_sets
+        ]
+
+
 def _restore_user_virtual_shops(data: dict):
     shops = data.get("userVirtualShops")
     if not isinstance(shops, list) or not shops or not isinstance(shops[0], list):
@@ -174,6 +191,7 @@ def restore_suite_fields(data: dict) -> dict:
     for field, keys in RESTORE_LIST_SCHEMAS.items():
         _restore_list_field(data, field, keys)
     _restore_user_cards(data)
+    _restore_user_areas(data)
     _restore_user_shops(data)
     _restore_user_virtual_shops(data)
     return data
