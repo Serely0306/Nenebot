@@ -41,9 +41,11 @@ type DefaultMessageTypeConfig struct {
 }
 
 type FileServerConfig struct {
-	Enabled   bool   `mapstructure:"enabled" yaml:"enabled"`
-	Root      string `mapstructure:"root" yaml:"root"`
-	PublicURL string `mapstructure:"public-url" yaml:"public-url"`
+	Enabled       bool   `mapstructure:"enabled" yaml:"enabled"`
+	Base64Enabled bool   `mapstructure:"base64-enabled" yaml:"base64-enabled"`
+	Base64MaxSize int64  `mapstructure:"base64-max-size" yaml:"base64-max-size"`
+	Root          string `mapstructure:"root" yaml:"root"`
+	PublicURL     string `mapstructure:"public-url" yaml:"public-url"`
 }
 
 type CommandAuthConfig struct {

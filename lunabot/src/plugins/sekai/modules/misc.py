@@ -370,7 +370,7 @@ async def _(ctx: SekaiHandlerContext):
             
 
 
-heyiwei = SekaiCmdHandler(["/pjsk detail", ])
+heyiwei = SekaiCmdHandler(["/pjskdetail", "/盒"])
 heyiwei.check_cdrate(cd).check_wblist(gbl)
 
 def get_pjsk_detail_missing_lines(profile: dict) -> list[str]:

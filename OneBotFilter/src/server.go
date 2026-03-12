@@ -135,6 +135,7 @@ func (wss *WsServer) writeLoop(ctx context.Context, writeChan chan WsMsg) {
 		case msg := <-writeChan:
 			data := msg.MsgData
 			if msg.MsgType == websocket.TextMessage {
+				data = ConvertFileToBase64(data)
 				data = ConvertFileToURL(data)
 			}
 			if err := wss.Conn.WriteMessage(msg.MsgType, data); err != nil {

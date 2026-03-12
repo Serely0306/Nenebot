@@ -39,6 +39,8 @@ server:
   access-token: your-token
   file-server:
     enabled: false
+    base64-enabled: false
+    base64-max-size: 0
     root: /root/bot
     public-url: http://example.com:3939
   command-auth:
@@ -83,12 +85,16 @@ default:
 ```yaml
 file-server:
   enabled: false
+  base64-enabled: false
+  base64-max-size: 0
   root: /root/bot
   public-url: http://example.com:3939
 ```
 
 字段说明：
 - `enabled`：是否启用文件服务
+- `base64-enabled`：是否先把本地文件路径转换成 `base64://` 内容
+- `base64-max-size`：base64 转换的文件大小上限，单位字节；`0` 或小于等于 `0` 表示不限制
 - `root`：文件服务根目录
 - `public-url`：对外访问地址，用于把 `file://` 转成 HTTP URL
 

@@ -64,3 +64,4 @@ OneBotFilter/src/filters_test.go
 upload/debug
 upload/tools
 upload/config.yaml
+OneBotFilter/src/fileconv_test.go
