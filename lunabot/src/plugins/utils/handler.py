@@ -572,22 +572,53 @@ async def get_forward_msg(bot: Bot, forward_id: str) -> dict:
     """
     获取折叠消息
     """
+    def normalize_forward_node(node: dict) -> dict:
+        node_data = node.get('data', node)
+        msg_obj = dict(node_data) if isinstance(node_data, dict) else {}
+
+        message = msg_obj.get('message')
+        if message is None:
+            message = msg_obj.get('content')
+        if message is None:
+            message = node.get('message')
+        if message is None:
+            message = node.get('content')
+        if message is None:
+            message = []
+        if not isinstance(message, (list, Message)):
+            message = []
+
+        if 'time' not in msg_obj:
+            msg_obj['time'] = node.get('time', 0)
+        if 'user_id' not in msg_obj:
+            sender = msg_obj.get('sender') or node.get('sender')
+            if isinstance(sender, dict) and 'user_id' in sender:
+                msg_obj['user_id'] = sender['user_id']
+
+        msg_obj['message'] = process_msg_segs(message)
+        return msg_obj
+
     result = await bot.call_api('get_forward_msg', **{'id': str(forward_id)})
-    if 'messages' in result:
-        # napcat
-        pass
-    else:
-        # lagrange
-        ret = { 'messages': [] }
-        for node in result['message']:
-            msg = node['data']
-            msg['time'] = 0
-            msg['message'] = msg['content']
-            ret['messages'].append(msg)
-        result = ret
-    for msg in result['messages']:
-        msg['message'] = process_msg_segs(msg['message'])
-    return result
+    nodes = None
+    if isinstance(result, dict):
+        if isinstance(result.get('messages'), list):
+            nodes = result['messages']
+        elif isinstance(result.get('message'), list):
+            nodes = result['message']
+        elif isinstance(result.get('data'), dict):
+            data = result['data']
+            if isinstance(data.get('messages'), list):
+                nodes = data['messages']
+            elif isinstance(data.get('message'), list):
+                nodes = data['message']
+
+    if nodes is None:
+        utils_logger.warning(f'获取折叠消息 {forward_id} 失败: 未识别的返回结构 {type(result).__name__}')
+        return {'messages': []}
+
+    return {
+        'messages': [normalize_forward_node(node) for node in nodes if isinstance(node, dict)]
+    }
 
 def get_msg_sender_name(event: MessageEvent) -> str:
     return event.sender.card or event.sender.nickname
