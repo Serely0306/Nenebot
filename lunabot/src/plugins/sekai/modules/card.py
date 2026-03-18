@@ -1232,7 +1232,7 @@ async def compose_card_detail_image(ctx: SekaiHandlerContext, card_id: int):
     cos3ds = await ctx.md.costume3ds.collect_by_ids([cos3d['costume3dId'] for cos3d in cos3d_ids])
     cos3d_imgs = []
     for cos3d in cos3ds:
-        asset_name = cos3d['assetbundleName']
+        asset_name = cos3d.get('assetbundleName') or cos3d.get('_assetbundleName')
         cos3d_imgs.append(ctx.rip.img(f"thumbnail/costume_rip/{asset_name}.png"))
     cos3d_imgs = await batch_gather(*cos3d_imgs)
 

@@ -352,7 +352,7 @@ async def compose_area_item_upgrade_materials_image(ctx: SekaiHandlerContext, qi
             res_type = detail.get('resourceType')
             res_id = detail.get('resourceId')
             res_lv = detail.get('resourceLevel')
-            if res_type == 'area_item' and res_id in item_ids:
+            if res_type == 'area_item' and res_id in item_ids and res_lv <= area_item_max_levels.get(res_id, 0):
                 area_item_lv_shop_item_resbox_ids.setdefault(res_id, {})[res_lv] = box_id
                 
     # 获取区域道具升级材料列表 m[item_id][level][material_id] = quantity
