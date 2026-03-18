@@ -689,10 +689,22 @@ async def resource_boxes_download_fn(base_url):
         return resbox
     return await run_in_pool(convert, resbox, resbox_detail)
 
-# @MasterDataManager.download_function("costume3ds", regions=COMPACT_DATA_REGIONS)
-# async def costume3ds_download_fn(base_url):
-#     costume3ds = await download_json(f"{base_url}/compactCostume3ds.json")
-#     return await run_in_pool(convert_compact_data, costume3ds)
+@MasterDataManager.download_function("costume3ds", regions=COMPACT_DATA_REGIONS)
+async def costume3ds_download_fn(base_url):
+    costume3ds = await download_json(f"{base_url}/costume3ds.json")
+    compact_costume3ds = await download_json(f"{base_url}/compactCostume3ds.json")
+    def convert(costume3ds, compact_costume3ds):
+        compact_items = {item['id']: item for item in convert_compact_data(compact_costume3ds)}
+        for item in costume3ds:
+            compact_item = compact_items.get(item['id'])
+            if not compact_item:
+                continue
+            # 保留新版 costume3ds 结构，仅将缺失字段从 compactCostume3ds 回填。
+            for key, value in compact_item.items():
+                if key not in item or item[key] is None:
+                    item[key] = value
+        return costume3ds
+    return await run_in_pool(convert, costume3ds, compact_costume3ds)
 
 
 # ================================ MasterData自定义转换 ================================ #

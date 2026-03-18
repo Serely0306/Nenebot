@@ -1233,8 +1233,9 @@ async def compose_card_detail_image(ctx: SekaiHandlerContext, card_id: int):
     cos3d_imgs = []
     for cos3d in cos3ds:
         asset_name = cos3d.get('assetbundleName') or cos3d.get('_assetbundleName')
-        cos3d_imgs.append(ctx.rip.img(f"thumbnail/costume_rip/{asset_name}.png"))
-    cos3d_imgs = await batch_gather(*cos3d_imgs)
+        if asset_name:
+            cos3d_imgs.append(ctx.rip.img(f"thumbnail/costume_rip/{asset_name}.png"))
+    cos3d_imgs = [img for img in await batch_gather(*cos3d_imgs) if img is not None]
 
     # ----------------------- 绘图 ----------------------- #
     title_style = TextStyle(font=DEFAULT_BOLD_FONT, size=24, color=BLACK)
