@@ -42,7 +42,7 @@ def register_proxy_routes(app):
                     data["updatedResources"]["userMysekaiGamedata"]["userId"] = int(uid)
 
                 if data_type == "suite":
-                    data = normalize_upload_payload(data, data_type, str(uid), data["source"], data["local_source"])
+                    data = normalize_upload_payload(region, data, data_type, str(uid), data["source"], data["local_source"])
                 save_path = save_json_payload(region, data_type, str(uid), data)
                 print(f"直接上传成功: {region} user {uid} ({data_type}) -> {save_path}")
                 return jsonify({"success": True, "message": f"{region} user {uid} data saved", "file_path": str(save_path)})
@@ -158,6 +158,7 @@ def register_proxy_routes(app):
                     ), 400
 
             data = normalize_upload_payload(
+                region=region,
                 data=data,
                 data_type=data_type,
                 game_id=str(game_id),

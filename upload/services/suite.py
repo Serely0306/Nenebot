@@ -57,6 +57,11 @@ RESTORE_LIST_SCHEMAS = {
     "userWorldBlooms": ["eventId", "gameCharacterId", "rank", "worldBloomChapterPoint", "worldBloomChapterPointUpdateAt"],
 }
 
+INCREMENTAL_MERGE_FIELDS = {
+    "userEvents": lambda item: (item.get("eventId"),),
+    "userWorldBlooms": lambda item: (item.get("eventId"), item.get("gameCharacterId")),
+}
+
 
 def _restore_list_field(data: dict, field: str, keys: list[str]):
     items = data.get(field)
@@ -197,6 +202,64 @@ def restore_suite_fields(data: dict) -> dict:
     _restore_user_shops(data)
     _restore_user_virtual_shops(data)
     return data
+
+
+def _merge_incremental_list(existing_items: list, new_items: list, key_fn):
+    merged = []
+    seen_keys = set()
+    existing_map = {}
+    for item in existing_items:
+        if not isinstance(item, dict):
+            continue
+        key = key_fn(item)
+        if any(part is None for part in key):
+            continue
+        existing_map[key] = item
+    new_map = {}
+    for item in new_items:
+        if not isinstance(item, dict):
+            continue
+        key = key_fn(item)
+        if any(part is None for part in key):
+            continue
+        new_map[key] = item
+
+    for item in existing_items:
+        if not isinstance(item, dict):
+            continue
+        key = key_fn(item)
+        if any(part is None for part in key) or key in seen_keys:
+            continue
+        merged.append(new_map.get(key, item))
+        seen_keys.add(key)
+
+    for item in new_items:
+        if not isinstance(item, dict):
+            continue
+        key = key_fn(item)
+        if any(part is None for part in key) or key in seen_keys:
+            continue
+        merged.append(item)
+        seen_keys.add(key)
+
+    return merged
+
+
+def merge_suite_incremental_fields(new_data: dict, existing_data: dict | None) -> dict:
+    if not isinstance(new_data, dict) or not isinstance(existing_data, dict):
+        return new_data
+
+    for field, key_fn in INCREMENTAL_MERGE_FIELDS.items():
+        existing_items = existing_data.get(field)
+        new_items = new_data.get(field)
+        if not isinstance(existing_items, list):
+            continue
+        if field not in new_data or not isinstance(new_items, list) or len(new_items) == 0:
+            new_data[field] = existing_items
+            continue
+        new_data[field] = _merge_incremental_list(existing_items, new_items, key_fn)
+
+    return new_data
 
 
 def process_suite_compact(data: dict) -> dict:

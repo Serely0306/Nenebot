@@ -6,7 +6,7 @@ from pathlib import Path
 
 from core.runtime import LUNABOT_DATA_BASE
 from services.crypto import DECRYPT_AVAILABLE, convert_to_serializable, decrypt_binary_data
-from services.suite import process_suite_compact
+from services.suite import merge_suite_incremental_fields, process_suite_compact
 
 
 def load_and_filter_json(file_path: Path, filter_keys: list[str]):
@@ -43,7 +43,7 @@ def save_json_payload(region: str, data_type: str, game_id: str, data: dict) -> 
     return save_path
 
 
-def normalize_upload_payload(data: dict, data_type: str, game_id: str, source: str, local_source: str) -> dict:
+def normalize_upload_payload(region: str, data: dict, data_type: str, game_id: str, source: str, local_source: str) -> dict:
     if "upload_time" not in data:
         data["upload_time"] = int(time.time() * 1000)
     data["source"] = source
@@ -51,6 +51,11 @@ def normalize_upload_payload(data: dict, data_type: str, game_id: str, source: s
     inject_user_id_if_needed(data, data_type, game_id)
     if data_type == "suite":
         data = process_suite_compact(data)
+        existing_path = LUNABOT_DATA_BASE / region / data_type / f"{game_id}.json"
+        if existing_path.exists():
+            with existing_path.open("r", encoding="utf-8") as fh:
+                existing_data = process_suite_compact(json.load(fh))
+            data = merge_suite_incremental_fields(data, existing_data)
     return data
 
 
@@ -68,6 +73,7 @@ def process_and_save_data(region, uid, data_bytes, data_type="mysekai"):
             return
 
         data = normalize_upload_payload(
+            region=region,
             data=data,
             data_type=data_type,
             game_id=str(uid),
