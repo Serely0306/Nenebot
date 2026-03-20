@@ -937,7 +937,12 @@ async def compose_event_detail_image(ctx: SekaiHandlerContext, event: dict) -> I
     return await draw(w, h)
 
 # 合成活动记录图片
-async def compose_event_record_image(ctx: SekaiHandlerContext, qid: int) -> Image.Image:
+async def compose_event_record_image(
+    ctx: SekaiHandlerContext,
+    qid: int,
+    order_mode: str = "best",
+    show_all: bool = False,
+) -> Image.Image:
     profile, err_msg = await get_detailed_profile(
         ctx, 
         qid, 
@@ -958,21 +963,12 @@ async def compose_event_record_image(ctx: SekaiHandlerContext, qid: int) -> Imag
     
     async def draw_events(name, user_events):
         topk = 30
-        if any('rank' in item for item in user_events):
-            has_rank = True
-            title = f"排名前{topk}的{name}记录"
-            user_events.sort(key=lambda x: (x.get('rank', 1e9), -x.get('eventPoint', 0)))
-        else:
-            has_rank = False
-            title = f"活动点数前{topk}的{name}记录"
-            user_events.sort(key=lambda x: -x['eventPoint'])
-
-        user_events = [item for item in user_events if await ctx.md.events.find_by_id(item['eventId'])]
-        user_events = user_events[:topk]
-
-        for i, item in enumerate(user_events):
-            item['no'] = i + 1
+        prepared_events = []
+        for item in user_events:
             event = await ctx.md.events.find_by_id(item['eventId'])
+            if not event:
+                continue
+            item = item.copy()
             item['banner'] = await get_event_banner_img(ctx, event)
             item['eventName'] = event['name']
             item['startAt'] = datetime.fromtimestamp(event['startAt'] / 1000)
@@ -980,40 +976,67 @@ async def compose_event_record_image(ctx: SekaiHandlerContext, qid: int) -> Imag
             if 'gameCharacterId' in item:
                 from .card import get_character_sd_image
                 item['charaIcon'] = await get_character_sd_image(item['gameCharacterId'])
+            prepared_events.append(item)
+
+        has_rank = any('rank' in item for item in prepared_events)
+        if order_mode == "timeline":
+            title = f"按活动顺序的{name}记录"
+            prepared_events.sort(key=lambda x: (x['startAt'], x['eventId'], x.get('gameCharacterId', 0)))
+        elif has_rank:
+            has_rank = True
+            title = f"{'全部' if show_all else f'排名前{topk}的'}{name}记录"
+            prepared_events.sort(key=lambda x: (x.get('rank', 1e9), -x.get('eventPoint', 0)))
+        else:
+            has_rank = False
+            title = f"{'全部' if show_all else f'活动点数前{topk}的'}{name}记录"
+            prepared_events.sort(key=lambda x: -x['eventPoint'])
+
+        if not show_all:
+            prepared_events = prepared_events[:topk]
+
+        for i, item in enumerate(prepared_events):
+            item['no'] = i + 1
+
+        if show_all and len(prepared_events) > topk:
+            prepared_events_chunks = [prepared_events[i:i + topk] for i in range(0, len(prepared_events), topk)]
+        else:
+            prepared_events_chunks = [prepared_events]
 
         with VSplit().set_padding(16).set_sep(16).set_item_align('lt').set_content_align('lt').set_bg(roundrect_bg()):
             TextBox(title, style1)
 
             th, sh, gh = 28, 40, 80
             with HSplit().set_padding(16).set_sep(16).set_item_align('lt').set_content_align('lt').set_bg(roundrect_bg()):
-                # 活动信息
-                with VSplit().set_padding(0).set_sep(sh).set_item_align('c').set_content_align('c'):
-                    TextBox("活动", style1).set_h(th).set_content_align('c')
-                    for item in user_events:
-                        with HSplit().set_padding(0).set_sep(4).set_item_align('l').set_content_align('l').set_h(gh):
-                            if 'charaIcon' in item:
-                                ImageBox(item['charaIcon'], size=(None, gh))
-                            ImageBox(item['banner'], size=(None, gh))
-                            with VSplit().set_padding(0).set_sep(2).set_item_align('l').set_content_align('l'):
-                                TextBox(f"【{item['eventId']}】{item['eventName']}", style2).set_w(150)
-                                TextBox(f"S {item['startAt'].strftime('%Y-%m-%d %H:%M')}", style2)
-                                TextBox(f"T {item['endAt'].strftime('%Y-%m-%d %H:%M')}", style2)
-                # 排名
-                if has_rank:
-                    with VSplit().set_padding(0).set_sep(sh).set_item_align('c').set_content_align('c'):
-                        TextBox("排名", style1).set_h(th).set_content_align('c')
-                        for item in user_events:
-                            TextBox(f"#{item.get('rank', '-')}", style3, overflow='clip').set_h(gh).set_content_align('c')
-                # 活动点数
-                with VSplit().set_padding(0).set_sep(sh).set_item_align('c').set_content_align('c'):
-                    TextBox("PT", style1).set_h(th).set_content_align('c')
-                    for item in user_events:
-                        TextBox(f"{item.get('eventPoint', '-')}", style3, overflow='clip').set_h(gh).set_content_align('c')
+                for prepared_events in prepared_events_chunks:
+                    with HSplit().set_sep(16).set_item_align('lt').set_content_align('lt'):
+                        # 活动信息
+                        with VSplit().set_padding(0).set_sep(sh).set_item_align('c').set_content_align('c'):
+                            TextBox("活动", style1).set_h(th).set_content_align('c')
+                            for item in prepared_events:
+                                with HSplit().set_padding(0).set_sep(4).set_item_align('l').set_content_align('l').set_h(gh):
+                                    if 'charaIcon' in item:
+                                        ImageBox(item['charaIcon'], size=(None, gh))
+                                    ImageBox(item['banner'], size=(None, gh))
+                                    with VSplit().set_padding(0).set_sep(2).set_item_align('l').set_content_align('l'):
+                                        TextBox(f"【{item['eventId']}】{item['eventName']}", style2).set_w(150)
+                                        TextBox(f"S {item['startAt'].strftime('%Y-%m-%d %H:%M')}", style2)
+                                        TextBox(f"T {item['endAt'].strftime('%Y-%m-%d %H:%M')}", style2)
+                        # 排名
+                        if has_rank:
+                            with VSplit().set_padding(0).set_sep(sh).set_item_align('c').set_content_align('c'):
+                                TextBox("排名", style1).set_h(th).set_content_align('c')
+                                for item in prepared_events:
+                                    TextBox(f"#{item.get('rank', '-')}", style3, overflow='clip').set_h(gh).set_content_align('c')
+                        # 活动点数
+                        with VSplit().set_padding(0).set_sep(sh).set_item_align('c').set_content_align('c'):
+                            TextBox("PT", style1).set_h(th).set_content_align('c')
+                            for item in prepared_events:
+                                TextBox(f"{item.get('eventPoint', '-')}", style3, overflow='clip').set_h(gh).set_content_align('c')
 
     with Canvas(bg=SEKAI_BLUE_BG).set_padding(BG_PADDING) as canvas:
         with VSplit().set_content_align('lt').set_item_align('lt').set_sep(16):
             await get_detailed_profile_card(ctx, profile, err_msg)
-            TextBox("每次抓包仅包含最近一次活动的记录\n上传时进行增量更新，未上传过的记录将会丢失\n领取活动牌子后上传数据才能记录排名", style4, use_real_line_count=True) \
+            TextBox("每次抓包仅包含最近一次活动的记录\n上传时进行增量更新，国服可本地上传2026.3.9前的suite记录获取之前的数据，后续未上传过的记录将会丢失\n领取活动牌子后上传数据才能记录排名\n参数：顺序 / 全部（可叠加）", style4, use_real_line_count=True) \
                 .set_bg(roundrect_bg()).set_padding(12)
             with HSplit().set_sep(16).set_item_align('lt').set_content_align('lt'):
                 if user_events:
@@ -1146,7 +1169,15 @@ pjsk_event_record = SekaiCmdHandler([
 pjsk_event_record.check_cdrate(cd).check_wblist(gbl)
 @pjsk_event_record.handle()
 async def _(ctx: SekaiHandlerContext):
+    args = ctx.get_args().strip()
+    lower_args = args.lower()
+    order_mode = "timeline" if ("顺序" in args or "timeline" in lower_args or "order" in lower_args) else "best"
+    show_all = ("全部" in args or "all" in lower_args)
+    for keyword in ["顺序", "全部", "timeline", "order", "all"]:
+        if keyword in lower_args:
+            lower_args = lower_args.replace(keyword, " ")
+    assert_and_reply(not lower_args.strip(), "无效参数，可用参数：顺序 / 全部")
     return await ctx.asend_reply_msg(await get_image_cq(
-        await compose_event_record_image(ctx, ctx.user_id),
+        await compose_event_record_image(ctx, ctx.user_id, order_mode=order_mode, show_all=show_all),
         low_quality=True,
     ))
