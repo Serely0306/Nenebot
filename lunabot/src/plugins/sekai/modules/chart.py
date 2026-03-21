@@ -73,7 +73,7 @@ async def generate_music_chart(
     jacket = await ctx.rip.img(f"music/jacket/{asset_name}_rip/{asset_name}.png")
     jacket = get_image_b64(jacket)
 
-    note_host = os.path.abspath(f'{CHART_ASSET_DIR}/notes')
+    note_host = Path(f'{CHART_ASSET_DIR}/notes').resolve().as_uri()
 
     sus_path = await ctx.rip.get_asset_cache_path(f"music/music_score/{music_id:04d}_01_rip/{difficulty}", allow_error=False)
     
@@ -112,6 +112,7 @@ async def generate_music_chart(
             drawing = pjsekai_scores.Drawing(
                 score=score,
                 style_sheet=style_sheet,
+                note_host=note_host,
                 skill=skill,
                 music_meta=music_meta,
                 target_segment_seconds=config.get('chart.target_segment_seconds'),
