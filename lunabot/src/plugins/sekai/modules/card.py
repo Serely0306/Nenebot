@@ -526,7 +526,9 @@ async def search_multi_cards(ctx: SekaiHandlerContext, args: str, cards: List[di
         card["supply_show_name"] = CARD_SUPPLIES_SHOW_NAMES.get(supply_type, None)
         if supply is not None:
             search_supplies = []
-            if supply == "all_limited":
+            if supply == "festival_limited":
+                search_supplies = ["bloom_festival_limited", "colorful_festival_limited"]
+            elif supply == "all_limited":
                 search_supplies = CARD_SUPPLIES_SHOW_NAMES.keys()
             elif supply == "not_limited":
                 search_supplies = ["normal"]
@@ -899,8 +901,9 @@ async def get_card_story_summary(ctx: SekaiHandlerContext, card: dict, refresh: 
 
 
 # 合成卡牌一览图片
-async def compose_box_image(ctx: SekaiHandlerContext, qid: int, cards: dict, show_id: bool, show_box: bool, use_after_training=True):
+async def compose_box_image(ctx: SekaiHandlerContext, qid: int, cards: dict, show_id: bool, show_box: bool, use_after_training=True, sort_by='default'):
     pcards = []
+    profile, pmsg = None, None
     if qid:
         profile, pmsg = await get_detailed_profile(ctx, qid, filter=get_detailed_profile_card_filter('userCards'), raise_exc=show_box)
         if profile:
@@ -925,7 +928,8 @@ async def compose_box_image(ctx: SekaiHandlerContext, qid: int, cards: dict, sho
         if chara_id not in chara_cards:
             chara_cards[chara_id] = []
         card['img'] = img
-        card['has'] = find_by(pcards, 'cardId', card['id']) is not None
+        card['pcard'] = find_by(pcards, 'cardId', card['id'])
+        card['has'] = card['pcard'] is not None
         if show_box and not card['has']:
             continue
         chara_cards[chara_id].append(card)
@@ -934,7 +938,31 @@ async def compose_box_image(ctx: SekaiHandlerContext, qid: int, cards: dict, sho
     chara_cards = list(chara_cards.items())
     chara_cards.sort(key=lambda x: x[0])
     for i in range(len(chara_cards)):
-        chara_cards[i][1].sort(key=lambda x: (x['cardRarityType'], x['releaseAt'], x['id']))
+        if sort_by == 'mr':
+            chara_cards[i][1].sort(key=lambda x: (
+                0 if x['pcard'] else 1,
+                -(x['pcard'].get('masterRank', 0) if x['pcard'] else 0),
+                -(x['pcard'].get('skillLevel', 0) if x['pcard'] else 0),
+                -x['releaseAt'],
+                -x['id'],
+            ))
+        elif sort_by == 'sl':
+            chara_cards[i][1].sort(key=lambda x: (
+                0 if x['pcard'] else 1,
+                -(x['pcard'].get('skillLevel', 0) if x['pcard'] else 0),
+                -(x['pcard'].get('masterRank', 0) if x['pcard'] else 0),
+                -x['releaseAt'],
+                -x['id'],
+            ))
+        elif sort_by == 'time':
+            chara_cards[i][1].sort(key=lambda x: (
+                0 if x['pcard'] else 1,
+                -(x['pcard'].get('createdAt', 0) if x['pcard'] else 0),
+                -x['releaseAt'],
+                -x['id'],
+            ))
+        else:
+            chara_cards[i][1].sort(key=lambda x: (x['cardRarityType'], x['releaseAt'], x['id']))
 
     # 计算最佳高度限制
     max_card_num = max([len(cards) for _, cards in chara_cards]) if chara_cards else 0
@@ -1002,7 +1030,99 @@ async def compose_box_image(ctx: SekaiHandlerContext, qid: int, cards: dict, sho
     add_watermark(canvas)
     return await canvas.get_img()
 
-# 获取指定ID的技能信息
+async def compose_createdAt_image(ctx: SekaiHandlerContext, qid: int, cards: dict, show_id: bool, use_after_training=True, group_by_year=False):
+    profile, pmsg = await get_detailed_profile(
+        ctx,
+        qid,
+        filter=get_detailed_profile_card_filter('userCards'),
+        raise_exc=True,
+    )
+    pcards = profile['userCards'] if profile else []
+
+    owned_cards = []
+    for card in cards:
+        pcard = find_by(pcards, 'cardId', card['id'])
+        if pcard and 'createdAt' in pcard:
+            card['createdAt'] = pcard['createdAt']
+            card['pcard'] = pcard
+            owned_cards.append(card)
+
+    assert_and_reply(owned_cards, "查询不到符合条件的已拥有卡牌")
+    owned_cards.sort(key=lambda x: (-x['createdAt'], -x['id']))
+
+    async def get_owned_thumb(card):
+        pcard = card['pcard']
+        if pcard:
+            return await get_card_full_thumbnail(ctx, card, pcard=pcard)
+        after_training = has_after_training(card) and use_after_training
+        if only_has_after_training(card):
+            after_training = True
+        return await get_card_full_thumbnail(ctx, card, after_training)
+
+    thumbs = await batch_gather(*[get_owned_thumb(card) for card in owned_cards])
+    for card, thumb in zip(owned_cards, thumbs):
+        card['img'] = thumb
+
+    title_style = TextStyle(font=DEFAULT_BOLD_FONT, size=24, color=(40, 40, 40))
+    text_style = TextStyle(font=DEFAULT_FONT, size=20, color=(60, 60, 60))
+    sub_style = TextStyle(font=DEFAULT_FONT, size=16, color=(80, 80, 80))
+
+    with Canvas(bg=SEKAI_BLUE_BG).set_padding(BG_PADDING) as canvas:
+        with VSplit().set_content_align('lt').set_item_align('lt').set_sep(16):
+            await get_detailed_profile_card(ctx, profile, pmsg)
+            with VSplit().set_content_align('lt').set_item_align('lt').set_sep(12).set_padding(16).set_bg(roundrect_bg()):
+                current_year = None
+                for card in owned_cards:
+                    created_at = datetime.fromtimestamp(card['createdAt'] / 1000)
+                    if group_by_year and created_at.year != current_year:
+                        current_year = created_at.year
+                        TextBox(str(current_year), title_style).set_padding((0, 8))
+
+                    with HSplit().set_content_align('c').set_item_align('c').set_sep(12).set_padding(8).set_bg(roundrect_bg(fill=(255, 255, 255, 120), radius=8)):
+                        ImageBox(card['img'], size=(84, 84), shadow=True)
+                        with VSplit().set_content_align('lt').set_item_align('lt').set_sep(6):
+                            title = f"#{card['id']} {card['prefix']}" if show_id else card['prefix']
+                            if card.get('supply_show_name'):
+                                title += f"  [{card['supply_show_name']}]"
+                            TextBox(title, text_style, use_real_line_count=True).set_w(620)
+                            TextBox(created_at.strftime('%Y-%m-%d %H:%M:%S'), sub_style)
+
+    add_watermark(canvas)
+    return await canvas.get_img()
+
+
+def _consume_keyword_once(text: str, keywords: list[str]) -> tuple[bool, str, str | None]:
+    for kw in sorted(keywords, key=len, reverse=True):
+        if kw in text:
+            return True, text.replace(kw, "", 1).strip(), kw
+    return False, text, None
+
+
+def _parse_box_sort(text: str) -> tuple[str, str]:
+    sort_keywords = {
+        "mr": ["mr排序", "专精排序", "专精等级排序"],
+        "sl": ["slv排序", "技能排序", "技能等级排序"],
+        "time": ["获取时间排序", "获得时间排序", "入手时间排序", "obat排序"],
+    }
+    for sort_by, keywords in sort_keywords.items():
+        hit, text, _ = _consume_keyword_once(text, keywords)
+        if hit:
+            return sort_by, text
+    return "default", text
+
+
+def _parse_box_mode(text: str) -> tuple[bool, bool, str]:
+    created_at_keywords = ["获取时间一览", "入手时间一览", "时间一览", "获取时间", "入手时间", "obdt", "obat"]
+    is_created_at_mode, text, _ = _consume_keyword_once(text, created_at_keywords)
+
+    group_by_year = False
+    if is_created_at_mode:
+        group_by_year_keywords = ["按年份", "按年", "year"]
+        group_by_year, text, _ = _consume_keyword_once(text, group_by_year_keywords)
+
+    return is_created_at_mode, group_by_year, text
+
+
 async def get_skill_info(ctx: SekaiHandlerContext, sid: int, card: dict):
     skill = await ctx.md.skills.find_by_id(sid)
     assert_and_reply(skill, f"技能ID={sid}不存在")
@@ -1484,6 +1604,8 @@ pjsk_box.check_cdrate(cd).check_wblist(gbl)
 @pjsk_box.handle()
 async def _(ctx: SekaiHandlerContext):
     args = ctx.get_args().strip()
+    sort_by, args = _parse_box_sort(args)
+    is_created_at_mode, group_by_year, args = _parse_box_mode(args)
     cards, args = await search_multi_cards(ctx, args, contain_leak=False)
 
     show_id = False
@@ -1504,10 +1626,18 @@ async def _(ctx: SekaiHandlerContext):
     assert_and_reply(not args, f"无法解析的参数:\"{args}\"")
     assert_and_reply(cards, "没有找到符合条件的卡牌")
     
-    await ctx.asend_reply_msg(await get_image_cq(
-        await compose_box_image(ctx, ctx.user_id, cards, show_id, show_box, use_after_training),
-        low_quality=True,
-    ))
+    if is_created_at_mode:
+        unique_charas = {card['characterId'] for card in cards}
+        assert_and_reply(len(unique_charas) <= 1, "考虑到布局，该功能仅支持查询单角色卡牌获取时间")
+        img = await compose_createdAt_image(
+            ctx, ctx.user_id, cards, show_id, use_after_training, group_by_year=group_by_year
+        )
+    else:
+        img = await compose_box_image(
+            ctx, ctx.user_id, cards, show_id, show_box, use_after_training, sort_by=sort_by
+        )
+
+    await ctx.asend_reply_msg(await get_image_cq(img, low_quality=True))
 
 
 # 查看当前绑定账号全部卡面的剩余满育材料统计。

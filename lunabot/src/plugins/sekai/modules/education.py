@@ -719,6 +719,84 @@ async def compose_leader_count_image(ctx: SekaiHandlerContext, qid: int) -> Imag
     add_watermark(canvas)
     return await canvas.get_img()
 
+# 合成材料信息图片
+async def compose_material_info_image(ctx: SekaiHandlerContext, qid: int, show_all: bool = False) -> Image.Image:
+    profile, pmsg = await get_detailed_profile(
+        ctx,
+        qid,
+        filter=get_detailed_profile_card_filter('userMaterials', 'userGamedata'),
+        raise_exc=True,
+        ignore_hide=True,
+    )
+
+    assert_and_reply('userMaterials' in profile, "你的Suite数据来源没有提供userMaterials数据。")
+    assert_and_reply('userGamedata' in profile, "你的Suite数据来源没有提供userGamedata数据。")
+
+    user_materials = profile['userMaterials']
+    if not user_materials:
+        raise ReplyException("你的账号中没有任何材料记录，或Suite数据来源未提供userMaterials数据。")
+
+    materials_dict = {
+        item['id']: item
+        for item in await RegionMasterDataWrapper(ctx.region, "materials").get()
+    }
+
+    display_items = []
+
+    coin_quantity = profile['userGamedata'].get('coin', 0)
+    if coin_quantity > 0 or show_all:
+        display_items.append({
+            'id': -1,
+            'type': 'coin',
+            'name': '金币',
+            'quantity': coin_quantity,
+            'seq': -1,
+        })
+
+    for um in user_materials:
+        quantity = um['quantity']
+        if quantity == 0 and not show_all:
+            continue
+
+        mat_id = um['materialId']
+        material = materials_dict.get(mat_id)
+        display_items.append({
+            'id': mat_id,
+            'type': 'material',
+            'name': material['name'] if material and material.get('name') else f"未知材料({mat_id})",
+            'quantity': quantity,
+            'seq': material.get('seq', 999999) if material else 999999,
+        })
+
+    if not display_items:
+        raise ReplyException("你当前没有任何持有数量大于0的材料。\n(可使用\"/材料信息 all\"查看所有历史获取记录)")
+
+    display_items.sort(key=lambda x: (x['seq'], x['id']))
+
+    icons = await batch_gather(*[get_res_icon(ctx, item['type'], item['id']) for item in display_items])
+    for item, icon in zip(display_items, icons):
+        item['icon'] = icon
+
+    with Canvas(bg=SEKAI_BLUE_BG).set_padding(BG_PADDING) as canvas:
+        with VSplit().set_content_align('lt').set_item_align('lt').set_sep(16):
+            await get_detailed_profile_card(ctx, profile, pmsg)
+
+            tip_text = "已隐藏数量为0的材料 可添加 all 参数查看所有记录" if not show_all else "当前已显示所有历史获取过的材料（包含数量为0）"
+            TextBox(tip_text, TextStyle(font=DEFAULT_BOLD_FONT, size=18, color=(50, 50, 50))).set_bg(roundrect_bg()).set_padding(12)
+
+            with Grid(col_count=4).set_sep(12, 12).set_item_align('lt').set_content_align('lt'):
+                for item in display_items:
+                    with HSplit().set_content_align('l').set_item_align('c').set_sep(10).set_padding(10).set_bg(roundrect_bg()).set_size((280, 80)):
+                        ImageBox(item['icon'], size=(56, 56), use_alphablend=True)
+                        with VSplit().set_content_align('lt').set_item_align('lt').set_sep(6):
+                            name_len = get_str_display_length(item['name'])
+                            name_font_size = 18 if name_len <= 16 else 14
+                            TextBox(item['name'], TextStyle(font=DEFAULT_BOLD_FONT, size=name_font_size, color=(70, 60, 80)), overflow='clip').set_w(190)
+                            TextBox(f"x{item['quantity']}", TextStyle(font=DEFAULT_BOLD_FONT, size=16, color=(50, 40, 60)))
+
+    add_watermark(canvas)
+    return await canvas.get_img()
+
 
 
 # ======================= 指令处理 ======================= #
@@ -841,6 +919,27 @@ pjsk_leader_count.check_cdrate(cd).check_wblist(gbl)
 async def _(ctx: SekaiHandlerContext):
     return await ctx.asend_reply_msg(await get_image_cq(
         await compose_leader_count_image(ctx, ctx.user_id),
+        low_quality=True,
+    ))
+
+
+# 查询材料信息
+pjsk_material_info = SekaiCmdHandler([
+    "/pjsk material", "/材料信息", "/pjsk材料",
+])
+pjsk_material_info.check_cdrate(cd).check_wblist(gbl)
+@pjsk_material_info.handle()
+async def _(ctx: SekaiHandlerContext):
+    args = ctx.get_args().strip().lower()
+    show_all = False
+    for keyword in ('all', 'full'):
+        if keyword in args:
+            show_all = True
+            args = args.replace(keyword, '', 1).strip()
+            break
+    assert_and_reply(not args, f"无法解析的参数 \"{args}\"")
+    return await ctx.asend_reply_msg(await get_image_cq(
+        await compose_material_info_image(ctx, ctx.user_id, show_all),
         low_quality=True,
     ))
 

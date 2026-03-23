@@ -1169,38 +1169,63 @@ class StaticImageRes:
 # ================================ 网页Json资源 ================================ #
 
 class WebJsonRes:
-    def __init__(self, name: str, url: str, update_interval: timedelta = None):
+    def __init__(self, name: str, url: str, update_interval: timedelta = None, file_cache: bool = True):
         self.name = name
         self.url = url
-        self.data = None
         self.update_interval = update_interval
+        self.data = None
         self.update_time = None
+        self.hash = None
+        self.file_cache_path = None
+        if file_cache:
+            self.file_cache_path = f"{SEKAI_DATA_DIR}/webjson/{self.name}.json"
     
-    async def download(self):
+    async def _download(self):
         self.data = await download_json(self.url)
+        self.hash = get_md5(dumps_json(self.data, indent=False).encode("utf-8"))
         self.update_time = datetime.now()
         logger.info(f"网页Json资源 [{self.name}] 更新成功")
+        if self.file_cache_path:
+            create_parent_folder(self.file_cache_path)
+            dump_json(self.data, self.file_cache_path, indent=False)
 
-    async def get(self):
-        if not self.data or not self.update_interval or datetime.now() - self.update_time > self.update_interval:
-            try:
-                await self.download()
-            except Exception as e:
-                if self.data:
-                    logger.error(f"更新网页Json资源 [{self.name}] 失败: {e}，继续使用旧数据")
-                else:
-                    raise e
+    async def _check_before_get(self, timeout: float, raise_on_no_data: bool):
+        need_update = (
+            self.data is None
+            or self.update_interval is None
+            or self.update_time is None
+            or datetime.now() - self.update_time > self.update_interval
+        )
+        if not need_update:
+            return
+        try:
+            await asyncio.wait_for(self._download(), timeout)
+        except Exception as e:
+            if self.data is not None:
+                logger.warning(f"更新网页Json资源 [{self.name}] 失败: {get_exc_desc(e)}，继续使用旧数据")
+            elif self.file_cache_path and osp.exists(self.file_cache_path):
+                self.data = load_json(self.file_cache_path)
+                self.hash = get_md5(dumps_json(self.data, indent=False).encode("utf-8"))
+                self.update_time = datetime.fromtimestamp(osp.getmtime(self.file_cache_path))
+                logger.warning(f"更新网页Json资源 [{self.name}] 失败: {get_exc_desc(e)}，从本地文件缓存中加载")
+            elif raise_on_no_data:
+                raise Exception(f"更新网页Json资源 [{self.name}] 失败: {get_exc_desc(e)}")
+            else:
+                logger.warning(f"更新网页Json资源 [{self.name}] 失败: {get_exc_desc(e)}，返回None")
+                self.data = None
+                self.hash = None
+                self.update_time = None
+
+    async def get(self, timeout: float = 5.0, raise_on_no_data: bool = True):
+        await self._check_before_get(timeout, raise_on_no_data)
         return self.data
     
-    async def get_update_time(self) -> datetime:
-        if not self.data or not self.update_interval or datetime.now() - self.update_time > self.update_interval:
-            try:
-                await self.download()
-            except Exception as e:
-                if self.data:
-                    logger.error(f"更新网页Json资源 [{self.name}] 失败: {e}，继续使用旧数据")
-                else:
-                    raise e
+    async def get_update_time(self, timeout: float = 5.0, raise_on_no_data: bool = True) -> datetime | None:
+        await self._check_before_get(timeout, raise_on_no_data)
         return self.update_time
+    
+    async def get_hash(self, timeout: float = 5.0, raise_on_no_data: bool = True) -> str | None:
+        await self._check_before_get(timeout, raise_on_no_data)
+        return self.hash
     
 

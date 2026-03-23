@@ -1,3 +1,5 @@
+import re
+
 from ...utils import *
 from ...llm import translate_text
 from ..common import *
@@ -91,6 +93,7 @@ MSR_PUSH_CONCURRENCY_CFG = config.item('mysekai.msr_push_concurrency')
 bd_msr_bind_db = get_file_db(f"{SEKAI_PROFILE_DIR}/bd_msr_bind.json", logger)
 
 harvest_point_image_offsets_cache: dict[int, Tuple[Image.Image, tuple[int, int]]] = {}
+MYSEKAI_ICON_CACHE_RES = 64 * 64
 
 # ======================= 处理逻辑 ======================= #
 
@@ -307,6 +310,8 @@ async def get_mysekai_and_detail_profile_card(ctx: SekaiHandlerContext, mysekai_
 def get_mysekai_last_refresh_time_and_reason(ctx: SekaiHandlerContext, dt: datetime=None) -> Tuple[datetime, str]:
     # 自然刷新
     h1, h2 = get_mysekai_refresh_hours(ctx)
+    if h1 > h2:
+        h1, h2 = h2, h1
     now = dt or datetime.now()
     last_refresh_time = None
     if now.hour < h1:
@@ -337,6 +342,7 @@ async def get_fixture_by_blueprint_id(ctx: SekaiHandlerContext, bid: int) -> Opt
 
 # 获取mysekai家具图标
 async def get_mysekai_fixture_icon(ctx: SekaiHandlerContext, fixture: dict, color_idx: int = 0) -> Image.Image:
+    img_cache_kwargs = {'use_img_cache': True, 'img_cache_max_res': MYSEKAI_ICON_CACHE_RES}
     ftype = fixture['mysekaiFixtureType']
     asset_name = fixture['assetbundleName']
     suface_type = fixture.get('mysekaiSettableLayoutType', None)
@@ -346,39 +352,40 @@ async def get_mysekai_fixture_icon(ctx: SekaiHandlerContext, fixture: dict, colo
 
     if ftype == "surface_appearance":
         suffix = "_1" if color_count == 1 else f"_{color_idx+1}"
-        return await ctx.rip.img(f"mysekai/thumbnail/surface_appearance/{asset_name}/tex_{asset_name}_{suface_type}{suffix}.png", use_img_cache=True)
+        return await ctx.rip.img(f"mysekai/thumbnail/surface_appearance/{asset_name}/tex_{asset_name}_{suface_type}{suffix}.png", **img_cache_kwargs)
     else:
         suffix = f"_{color_idx+1}"
-        return await ctx.rip.img(f"mysekai/thumbnail/fixture/{asset_name}{suffix}.png", use_img_cache=True)
+        return await ctx.rip.img(f"mysekai/thumbnail/fixture/{asset_name}{suffix}.png", **img_cache_kwargs)
 
 # 获取mysekai资源图标
 async def get_mysekai_res_icon(ctx: SekaiHandlerContext, key: str) -> Image.Image:
     img = UNKNOWN_IMG
+    img_cache_kwargs = {'use_img_cache': True, 'img_cache_max_res': MYSEKAI_ICON_CACHE_RES}
     try:
         res_id = int(key.split("_")[-1])
         # mysekai材料
         if key.startswith("mysekai_material"):
             name = (await ctx.md.mysekai_materials.find_by_id(res_id))['iconAssetbundleName']
-            img = await ctx.rip.img(f"mysekai/thumbnail/material/{name}.png", use_img_cache=True)
+            img = await ctx.rip.img(f"mysekai/thumbnail/material/{name}.png", **img_cache_kwargs)
         # 普通材料
         elif key.startswith("material"):
-            img = await ctx.rip.img(f"thumbnail/material_rip/material{res_id}.png", use_img_cache=True)
+            img = await ctx.rip.img(f"thumbnail/material_rip/material{res_id}.png", **img_cache_kwargs)
         # 道具
         elif key.startswith("mysekai_item"):
             name = (await ctx.md.mysekai_items.find_by_id(res_id))['iconAssetbundleName']
-            img = await ctx.rip.img(f"mysekai/thumbnail/item/{name}.png", use_img_cache=True)
+            img = await ctx.rip.img(f"mysekai/thumbnail/item/{name}.png", **img_cache_kwargs)
         # 家具（植物种子）
         elif key.startswith("mysekai_fixture"):
             name = (await ctx.md.mysekai_fixtures.find_by_id(res_id))['assetbundleName']
             try:
-                img = await ctx.rip.img(f"mysekai/thumbnail/fixture/{name}_{res_id}_1.png", use_img_cache=True)
+                img = await ctx.rip.img(f"mysekai/thumbnail/fixture/{name}_{res_id}_1.png", **img_cache_kwargs)
             except:
-                img = await ctx.rip.img(f"mysekai/thumbnail/fixture/{name}_1.png", use_img_cache=True)
+                img = await ctx.rip.img(f"mysekai/thumbnail/fixture/{name}_1.png", **img_cache_kwargs)
         # 唱片
         elif key.startswith("mysekai_music_record"):
             mid = (await ctx.md.mysekai_musicrecords.find_by_id(res_id))['externalId']
             name = (await ctx.md.musics.find_by_id(mid))['assetbundleName']
-            img = await ctx.rip.img(f"music/jacket/{name}_rip/{name}.png", use_img_cache=True)
+            img = await ctx.rip.img(f"music/jacket/{name}_rip/{name}.png", **img_cache_kwargs)
         # 蓝图
         elif key.startswith("mysekai_blueprint"):
             fixture = await get_fixture_by_blueprint_id(ctx, res_id)
@@ -422,7 +429,13 @@ def get_mysekai_phenomena_color_info(phenomena_id: int) -> dict:
         }
 
 # 合成mysekai资源位置地图图片
-async def compose_mysekai_harvest_map_image(ctx: SekaiHandlerContext, harvest_map: dict, show_harvested: bool, phenomena_color_info: dict) -> Image.Image:
+async def compose_mysekai_harvest_map_image(
+    ctx: SekaiHandlerContext,
+    harvest_map: dict,
+    show_harvested: bool,
+    phenomena_color_info: dict,
+    mysekai_info: dict = None,
+) -> Image.Image:
     site_id = harvest_map['mysekaiSiteId']
     site_image_info = Config('sekai.mysekai_site_map_image_info').get(site_id)
     site_image = ctx.static_imgs.get(site_image_info['image'])
@@ -616,6 +629,7 @@ async def compose_mysekai_harvest_map_image(ctx: SekaiHandlerContext, harvest_ma
             draw_order: int = None
             outline: Optional[Tuple[Tuple[int, int, int, int], int]] = None
             light_size: int = None
+            attachment: Image.Image = None
 
         # 获取所有资源掉落绘制
         res_draw_calls: List[ResDrawCall] = []
@@ -651,6 +665,12 @@ async def compose_mysekai_harvest_map_image(ctx: SekaiHandlerContext, harvest_ma
                     large_size *= 1.5
                 if item['type'] == 'mysekai_music_record':
                     large_size *= 1.5
+                    has_music_record = mysekai_info and find_by(
+                        mysekai_info['updatedResources'].get('userMysekaiMusicRecords', []),
+                        'mysekaiMusicRecordId',
+                        item['id'],
+                    ) is not None
+                    call.attachment = ctx.static_imgs.get("mysekai/music_record.png") if has_music_record else None
                 if item['small_icon']:
                     call.size = small_size
                     call.x = int(item['x'] + 0.5 * large_size * large_total - 0.6 * small_size)
@@ -713,6 +733,13 @@ async def compose_mysekai_harvest_map_image(ctx: SekaiHandlerContext, harvest_ma
                     Frame().set_bg(FillBg(stroke=stroke, stroke_width=stroke_w, fill=TRANSPARENT)) \
                         .set_size((call.size+stroke_w*2, call.size+stroke_w*2))
 
+        # 绘制附件
+        for call in res_draw_calls:
+            if call.attachment:
+                attach_size = int(call.size * 0.6)
+                ImageBox(call.attachment, size=(attach_size, attach_size), use_alphablend=True) \
+                    .set_offset((int(call.x + call.size - attach_size * 0.7), int(call.z + call.size - attach_size * 0.7)))
+
         # 绘制资源数量
         for call in res_draw_calls:
             if not call.small_icon:
@@ -760,7 +787,10 @@ async def compose_mysekai_res_image(ctx: SekaiHandlerContext, qid: int, show_har
 
     # 判断当前天气
     current_hour = upload_time.hour
-    phenom_idx = 1 if current_hour < h1 or current_hour >= h2 else 0
+    if h1 < h2:
+        phenom_idx = 1 if current_hour < h1 or current_hour >= h2 else 0
+    else:
+        phenom_idx = 1 if h2 <= current_hour < h1 else 0
     cur_phenom_id = phenom_ids[phenom_idx]
     phenom_color_info = get_mysekai_phenomena_color_info(cur_phenom_id)
     phenom_bg = FillBg(LinearGradient(c1=phenom_color_info['sky1'], c2=phenom_color_info['sky2'], p1=(0.25, 1.0), p2=(0.75, 0.0)))
@@ -881,7 +911,13 @@ async def compose_mysekai_res_image(ctx: SekaiHandlerContext, qid: int, show_har
             site_id, res_num = site_res_num[i]
             site_harvest_map = find_by(harvest_maps, "mysekaiSiteId", site_id)
             if site_harvest_map:
-                site_harvest_map_imgs.append(compose_mysekai_harvest_map_image(ctx, site_harvest_map, show_harvested, phenom_color_info))
+                site_harvest_map_imgs.append(compose_mysekai_harvest_map_image(
+                    ctx,
+                    site_harvest_map,
+                    show_harvested,
+                    phenom_color_info,
+                    mysekai_info,
+                ))
         site_harvest_map_imgs = await asyncio.gather(*site_harvest_map_imgs)
    
     try: 
@@ -1349,14 +1385,17 @@ async def get_mysekai_fixture_detail_image_card(ctx: SekaiHandlerContext, fid: i
     # 抄写好友码
     friendcodes, friendcode_source = await get_mysekai_fixture_friend_codes(ctx, fid)
 
+    title_style = TextStyle(font=DEFAULT_BOLD_FONT, size=20, color=(25, 25, 25))
+    text_style = TextStyle(font=DEFAULT_FONT, size=18, color=(50, 50, 50))
+
     w = 600
     with VSplit().set_content_align('lt').set_item_align('lt').set_sep(8).set_padding(16) as vs:
         # 标题
-        title_text = f"【{fid}】{fname}"
+        title_text = f"【{ctx.region.upper()}-{fid}】{fname}"
         if translated_name: title_text += f" ({translated_name})"
-        TextBox(title_text, TextStyle(font=DEFAULT_BOLD_FONT, size=24, color=(20, 20, 20)), use_real_line_count=True).set_padding(8).set_bg(roundrect_bg()).set_w(w+16)
+        TextBox(title_text, TextStyle(font=DEFAULT_BOLD_FONT, size=24, color=(0, 0, 0)), use_real_line_count=True).set_padding(8).set_bg(roundrect_bg()).set_w(w+16)
         # 缩略图列表
-        with Grid(col_count=5).set_content_align('c').set_item_align('c').set_sep(8, 4).set_padding(8).set_bg(roundrect_bg()).set_w(w+16):
+        with Grid(col_count=min(5, len(fcolorcodes))).set_content_align('c').set_item_align('c').set_sep(8, 4).set_padding(8).set_bg(roundrect_bg()).set_w(w+16):
             for color_code, img in zip(fcolorcodes, fimgs):
                 with VSplit().set_content_align('c').set_item_align('c').set_sep(8):
                     ImageBox(img, size=(None, 100), use_alphablend=True, shadow=True)
@@ -1368,56 +1407,57 @@ async def get_mysekai_fixture_detail_image_card(ctx: SekaiHandlerContext, fid: i
                         ))
         # 基本信息
         with VSplit().set_content_align('lt').set_item_align('lt').set_sep(8).set_padding(8).set_bg(roundrect_bg()).set_w(w+16):
-            font_size, text_color = 18, (100, 100, 100)
-            style = TextStyle(font=DEFAULT_FONT, size=font_size, color=text_color)
             with HSplit().set_content_align('c').set_item_align('c').set_sep(2):
-                TextBox(f"【类型】", style)
-                ImageBox(main_genre_image, size=(None, font_size+2), use_alphablend=True).set_bg(RoundRectBg(fill=(150,150,150,255), radius=2))
-                TextBox(main_genre_name, style)
+                TextBox(f"【类型】", text_style)
+                ImageBox(main_genre_image, size=(None, text_style.size+2), use_alphablend=True).set_bg(RoundRectBg(fill=(150,150,150,255), radius=2))
+                TextBox(main_genre_name, text_style)
                 if sub_genre_id:
-                    TextBox(f" > ", TextStyle(font=DEFAULT_HEAVY_FONT, size=font_size, color=text_color))
-                    ImageBox(sub_genre_image, size=(None, font_size+2), use_alphablend=True).set_bg(RoundRectBg(fill=(150,150,150,255), radius=2))
-                    TextBox(sub_genre_name, style)
-                TextBox(f"【大小】长x宽x高={fsize['width']}x{fsize['depth']}x{fsize['height']}", style)
-            
+                    TextBox(f" > ", text_style)
+                    ImageBox(sub_genre_image, size=(None, text_style.size+2), use_alphablend=True).set_bg(RoundRectBg(fill=(150,150,150,255), radius=2))
+                    TextBox(sub_genre_name, text_style)
+
+            with HSplit().set_content_align('c').set_item_align('c').set_sep(8):
+                TextBox(f"【大小】长x宽x高={fsize['width']}x{fsize['depth']}x{fsize['height']}", text_style)
+                TextBox(f"【放置消耗】{fixture.get('firstPutCost', 0)} (首次) / {fixture.get('secondPutCost', 0)} (重复)", text_style)
+
             with HSplit().set_content_align('c').set_item_align('c').set_sep(2):
-                TextBox(f"【可制作】" if is_assemble else "【不可制作】", style)
-                TextBox(f"【可回收】" if is_disassembled else "【不可回收】", style)
-                TextBox(f"【玩家可交互】" if is_player_action else "【玩家不可交互】", style)
-                TextBox(f"【游戏角色可交互】" if is_character_action else "【游戏角色无交互】", style)
+                TextBox(f"【🔨可制作】" if is_assemble else "【❌不可制作】", text_style)
+                TextBox(f"【♻️可回收】" if is_disassembled else "【❌不可回收】", text_style)
+                TextBox(f"【👋玩家可交互】" if is_player_action else "【❌玩家不可交互】", text_style)
+                TextBox(f"【🎡角色可交互】" if is_character_action else "【❌角色无交互】", text_style)
 
             if blueprint:
                 with HSplit().set_content_align('c').set_item_align('c').set_sep(2):
-                    TextBox(f"【蓝图可抄写】" if is_sketchable else "【蓝图不可抄写】", style)
-                    TextBox(f"【蓝图可转换获得】" if can_obtain_by_convert else "【蓝图不可转换获得】", style)
-                    TextBox(f"【最多制作{craft_count_limit}次】" if craft_count_limit else "【无制作次数限制】", style)
+                    TextBox(f"【📝蓝图可抄写】" if is_sketchable else "【蓝图不可抄写】", text_style)
+                    TextBox(f"【🎁蓝图可合成】" if can_obtain_by_convert else "【蓝图不可合成】", text_style)
+                    TextBox(f"【最多制作{craft_count_limit}次】" if craft_count_limit else "【无制作次数限制】", text_style)
 
         # 制作材料
         if blueprint and cost_materials:
             with VSplit().set_content_align('lt').set_item_align('lt').set_sep(8).set_padding(12).set_bg(roundrect_bg()):
-                TextBox("制作材料", TextStyle(font=DEFAULT_BOLD_FONT, size=20, color=(50, 50, 50))).set_w(w)
+                TextBox("制作材料", title_style).set_w(w)
                 with Grid(col_count=8).set_content_align('lt').set_sep(6, 6):
                     for img, quantity in cost_materials:
                         with VSplit().set_content_align('c').set_item_align('c').set_sep(2):
                             ImageBox(img, size=(50, 50), use_alphablend=True)
-                            TextBox(f"x{quantity}", TextStyle(font=DEFAULT_BOLD_FONT, size=18, color=(100, 100, 100)))
+                            TextBox(f"x{quantity}", TextStyle(font=DEFAULT_BOLD_FONT, size=18, color=(25, 25, 25)))
 
         # 回收材料
         if recycle_materials:
             with VSplit().set_content_align('lt').set_item_align('lt').set_sep(8).set_padding(12).set_bg(roundrect_bg()):
-                TextBox("回收材料", TextStyle(font=DEFAULT_BOLD_FONT, size=20, color=(50, 50, 50))).set_w(w)
+                TextBox("回收材料", title_style).set_w(w)
                 with Grid(col_count=8).set_content_align('lt').set_sep(6, 6):
                     for img, quantity in recycle_materials:
                         with VSplit().set_content_align('c').set_item_align('c').set_sep(2):
                             ImageBox(img, size=(50, 50), use_alphablend=True)
-                            TextBox(f"x{quantity}", TextStyle(font=DEFAULT_BOLD_FONT, size=18, color=(100, 100, 100)))
+                            TextBox(f"x{quantity}", TextStyle(font=DEFAULT_BOLD_FONT, size=18, color=(25, 25, 25)))
 
         # 交互角色
         if has_chara_react:
             with VSplit().set_content_align('lt').set_item_align('lt').set_sep(8).set_padding(12).set_bg(roundrect_bg()):
-                TextBox("角色互动", TextStyle(font=DEFAULT_BOLD_FONT, size=20, color=(50, 50, 50))).set_w(w)
+                TextBox("角色互动", title_style).set_w(w)
                 with VSplit().set_content_align('lt').set_item_align('lt').set_sep(8):
-                    for i, chara_group_imgs in enumerate(react_chara_group_imgs):
+                    for chara_group_imgs in react_chara_group_imgs:
                         chara_num = len(chara_group_imgs[0]) if chara_group_imgs else None
                         if not chara_num: continue
                         col_num_dict = { 1: 10, 2: 5, 3: 4, 4: 2 }
@@ -1431,9 +1471,10 @@ async def get_mysekai_fixture_detail_image_card(ctx: SekaiHandlerContext, fid: i
         # 标签
         if tags:
             with VSplit().set_content_align('lt').set_item_align('lt').set_sep(8).set_padding(12).set_bg(roundrect_bg()):
-                TextBox("标签", TextStyle(font=DEFAULT_BOLD_FONT, size=20, color=(50, 50, 50))).set_w(w)
+                TextBox("标签", title_style).set_w(w)
                 tag_text = ""
-                for tag in tags: tag_text += f"【{tag}】"
+                for tag in tags:
+                    tag_text += f"【{tag}】"
                 TextBox(tag_text, TextStyle(font=DEFAULT_FONT, size=18, color=(100, 100, 100)), line_count=10, use_real_line_count=True).set_w(w)
 
         # 抄写好友码
@@ -1441,7 +1482,7 @@ async def get_mysekai_fixture_detail_image_card(ctx: SekaiHandlerContext, fid: i
             with VSplit().set_content_align('lt').set_item_align('lt').set_sep(8).set_padding(12).set_bg(roundrect_bg()):
                 with HSplit().set_content_align('lb').set_item_align('lb').set_sep(8).set_w(w):
                     TextBox("抄写蓝图可前往", TextStyle(font=DEFAULT_BOLD_FONT, size=20, color=(50, 50, 50)))
-                    TextBox(f"(数据来自{friendcode_source})", TextStyle(font=DEFAULT_FONT, size=14, color=(75, 75, 75)))
+                    TextBox(f"(数据来自{friendcode_source})", TextStyle(font=DEFAULT_FONT, size=16, color=(75, 75, 75)))
                 friendcodes = random.sample(friendcodes, min(2, len(friendcodes)))
                 code_text = "      ".join(friendcodes)
                 TextBox(code_text, TextStyle(font=DEFAULT_FONT, size=18, color=(100, 100, 100)), line_count=10, use_real_line_count=True).set_w(w)
@@ -1943,9 +1984,9 @@ async def compose_mysekai_talk_list_image(
                                             fids, _ = single_talk_fixtures[main_genre_id][sub_genre_id][cur_idx]
                                             draw_fids(fids, fids_single_reads)
                                             cur_x += len(fids)
-                                            cur_idx += 1     
+                                            cur_idx += 1
                                             if cur_idx >= len(single_talk_fixtures[main_genre_id][sub_genre_id]):
-                                                break   
+                                                break
                                     if cur_idx >= len(single_talk_fixtures[main_genre_id][sub_genre_id]):
                                         break
                 if not has_single:
@@ -1996,6 +2037,118 @@ def update_bd_msr_limit_uid(ctx: SekaiHandlerContext, qid: int) -> str:
     msr_binds[qid] = str(uid)
     bd_msr_bind_db.set(f"{ctx.region}_bind", msr_binds)
     return uid
+
+
+async def request_update_bd_msr_limit_uid(ctx: SekaiHandlerContext, qid: int, force: bool = False):
+    assert_and_reply(ctx.region in BD_MYSEKAI_REGIONS, "指令对此区服无效")
+    assert_and_reply(bd_msr_sub.is_subbed(ctx.region, ctx.group_id), "指令在此群无效")
+    qid = str(qid)
+    next_times = bd_msr_bind_db.get(f"{ctx.region}_next_time", {})
+    next_time = next_times.get(qid, 0)
+    if not force and next_time > datetime.now().timestamp():
+        raise ReplyException(f"请于{datetime.fromtimestamp(next_time).strftime('%m-%d %H:%M:%S')}后再试")
+    uid = get_player_bind_id(ctx)
+
+    async def do_update(new_ctx: HandlerContext):
+        update_bd_msr_limit_uid(ctx, qid)
+        next_times = bd_msr_bind_db.get(f"{ctx.region}_next_time", {})
+        next_times[qid] = int((datetime.now() + timedelta(days=7)).timestamp())
+        bd_msr_bind_db.set(f"{ctx.region}_next_time", next_times)
+        await new_ctx.asend_reply_msg(
+            f"已将你的{get_region_name(ctx.region)}MSR查询限制ID切换为当前绑定的ID: "
+            f"{process_hide_uid(ctx, uid, keep=6)}，一周内不可再次切换"
+        )
+
+    await add_need_confirm_action(
+        ctx,
+        do_update,
+        additional_msg=(
+            f"是否将你的{get_region_name(ctx.region)}MSR查询限制ID切换为当前绑定的ID: "
+            f"{process_hide_uid(ctx, uid, keep=6)}？一周内只能切换一次"
+        ),
+    )
+
+
+async def compose_mysekai_material_info_image(ctx: SekaiHandlerContext, qid: int, show_all: bool = False) -> Image.Image:
+    profile, pmsg = await get_detailed_profile(
+        ctx,
+        qid,
+        filter=get_detailed_profile_card_filter('userMysekaiMaterials'),
+        raise_exc=True,
+        ignore_hide=True,
+    )
+
+    user_materials = profile.get('userMysekaiMaterials', [])
+    if not user_materials:
+        raise ReplyException("你的账号中没有任何烤森材料记录，或Suite数据来源未提供userMysekaiMaterials数据。")
+
+    materials_data = await RegionMasterDataWrapper(ctx.region, "mysekaiMaterials").get()
+    materials_dict = {item['id']: item for item in materials_data}
+
+    display_items = []
+    for user_material in user_materials:
+        quantity = user_material['quantity']
+        if quantity == 0 and not show_all:
+            continue
+
+        mat_id = user_material['mysekaiMaterialId']
+        material = materials_dict.get(mat_id)
+        if material:
+            mat_name = material.get('name') or f"未知烤森材料({mat_id})"
+            seq = material.get('seq', 999999)
+            desc = material.get('description', '')
+        else:
+            mat_name = f"未知烤森材料({mat_id})"
+            seq = 999999
+            desc = ''
+
+        if 35 <= mat_id <= 60 and desc:
+            match = re.search(r'和(.*?)的(?:回忆|回憶)碎片', desc)
+            if match:
+                mat_name = f"{match.group(1)}的记忆"
+
+        display_items.append({
+            'id': mat_id,
+            'name': mat_name,
+            'quantity': quantity,
+            'seq': seq,
+        })
+
+    if not display_items:
+        raise ReplyException("你当前没有任何持有数量大于0的烤森材料。\n(可使用\"/烤森材料 all\"查看所有历史获取记录)")
+
+    display_items.sort(key=lambda x: (x['seq'], x['id']))
+    icons = await batch_gather(*[get_mysekai_res_icon(ctx, f"mysekai_material_{item['id']}") for item in display_items])
+    for item, icon in zip(display_items, icons):
+        item['icon'] = icon
+
+    with Canvas(bg=SEKAI_BLUE_BG).set_padding(BG_PADDING) as canvas:
+        with VSplit().set_content_align('lt').set_item_align('lt').set_sep(16):
+            await get_detailed_profile_card(ctx, profile, pmsg)
+
+            tip_text = (
+                "已隐藏数量为0的烤森材料 可添加 all 参数查看所有记录"
+                if not show_all else
+                "当前已显示所有历史获取过的烤森材料（包含数量为0）"
+            )
+            TextBox(tip_text, TextStyle(font=DEFAULT_BOLD_FONT, size=18, color=(50, 50, 50))).set_bg(roundrect_bg()).set_padding(12)
+
+            with Grid(col_count=4).set_sep(12, 12).set_item_align('lt').set_content_align('lt'):
+                for item in display_items:
+                    with HSplit().set_content_align('l').set_item_align('c').set_sep(10).set_padding(10).set_bg(roundrect_bg()).set_size((280, 80)):
+                        ImageBox(item['icon'], size=(56, 56), use_alphablend=True)
+                        with VSplit().set_content_align('lt').set_item_align('lt').set_sep(6):
+                            name_len = get_str_display_length(item['name'])
+                            name_font_size = 18 if name_len <= 16 else 14
+                            TextBox(
+                                item['name'],
+                                TextStyle(font=DEFAULT_BOLD_FONT, size=name_font_size, color=(70, 60, 80)),
+                                overflow='clip',
+                            ).set_w(190)
+                            TextBox(f"x{item['quantity']}", TextStyle(font=DEFAULT_BOLD_FONT, size=16, color=(50, 40, 60)))
+
+    add_watermark(canvas)
+    return await canvas.get_img()
 
 
 
@@ -2234,18 +2387,26 @@ msr_change_bind.check_cdrate(cd).check_wblist(gbl)
 @msr_change_bind.handle()
 async def _(ctx: SekaiHandlerContext):
     args = ctx.get_args().strip()
+    force = False
+    if 'force' in args and check_superuser(ctx.event):
+        force = True
+        args = args.replace('force', '', 1).strip()
     assert_and_reply(not args, "该指令用于切换MSR查询限制ID为你当前绑定的ID，不需要添加参数。请你确认要更换的ID为你当前绑定的ID")
+    await request_update_bd_msr_limit_uid(ctx, ctx.user_id, force)
 
-    next_times = bd_msr_bind_db.get(f"{ctx.region}_next_time", {})
-    qid = str(ctx.user_id)
-    next_time = next_times.get(qid, 0)
-    if next_time > datetime.now().timestamp():
-        raise ReplyException(f"请于{datetime.fromtimestamp(next_time).strftime('%m-%d %H:%M:%S')}后再试")
-    uid = update_bd_msr_limit_uid(ctx, ctx.user_id)
-    next_times[qid] = int((datetime.now() + timedelta(days=7)).timestamp())
-    bd_msr_bind_db.set(f"{ctx.region}_next_time", next_times)
-    await ctx.asend_reply_msg(f"已将你的{get_region_name(ctx.region)}MSR查询限制ID切换为当前绑定的ID: "
-                              f"{process_hide_uid(ctx, uid, keep=6)}，一周内不可再次切换")
+
+pjsk_mysekai_material_info = SekaiCmdHandler([
+    "/pjsk mysekai材料", "/烤森材料", "/mysekai材料",
+], regions=MYSEKAI_REGIONS)
+pjsk_mysekai_material_info.check_cdrate(cd).check_wblist(gbl)
+@pjsk_mysekai_material_info.handle()
+async def _(ctx: SekaiHandlerContext):
+    args = ctx.get_args().strip().lower()
+    show_all = 'all' in args
+    return await ctx.asend_reply_msg(await get_image_cq(
+        await compose_mysekai_material_info_image(ctx, ctx.user_id, show_all),
+        low_quality=True,
+    ))
 
 
 # ======================= 定时任务 ======================= #

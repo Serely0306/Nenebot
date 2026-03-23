@@ -2,6 +2,9 @@ log_level: "INFO"
 superuser:
   - 12345678
 
+confirm_actions_timeout_seconds: 300
+allow_code_exec: false   # 是否允许通过 /exec 指令执行代码
+
 startup_task_delay_seconds:
   min: 0
   max: 3

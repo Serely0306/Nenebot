@@ -55,6 +55,8 @@ async def alive_check():
         try:
             bot = get_bot_by_self_id(self_id)
             assert bot
+            status = await bot.get_status()
+            assert status['online'] and status['good']
             new_state = CONNECT_STATE
         except:
             new_state = DISCONNECT_STATE
@@ -82,7 +84,7 @@ async def alive_check():
 
         # 如果当前状态不等于认为的状态且持续时间超过阈值，发送通知
         if st.cur_state != st.noti_state and st.cur_elapsed >= timedelta(seconds=TIME_THRESHOLD_CFG.get()):
-            logger.info(f"存活检测发生变更：{st.noti_state} -> {st.cur_state}，持续时间：{st.cur_elapsed}")
+            logger.info(f"Bot账号 {self_id} 存活检测发生变更：{st.noti_state} -> {st.cur_state}，持续时间：{st.cur_elapsed}")
             if NOTIFY_AT_FIRST_CFG.get() or st.noti_state != NONE_STATE:
                 await send_noti(st.cur_state)
             st.noti_state = st.cur_state
@@ -115,7 +117,10 @@ async def _(ctx: HandlerContext):
 async def get_status_image_cq():
     bg = await bg_preloader.get()
     collected = await collect_all()
-    return await get_image_cq(await render_current_template(collected=collected, bg=bg))
+    return await get_image_cq(
+        await render_current_template(collected=collected, bg=bg),
+        low_quality=True,
+    )
 
 
 status = CmdHandler(["status", "状态"], logger, only_to_me=True, block=True)

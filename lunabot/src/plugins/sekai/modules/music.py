@@ -31,6 +31,25 @@ music_name_retriever = get_text_retriever(f"music_name")
 music_cn_titles = WebJsonRes("曲名中文翻译", "https://i18n-json.sekai.best/zh-CN/music_titles.json", update_interval=timedelta(days=1))
 music_en_titles = WebJsonRes("曲名英文翻译", "https://i18n-json.sekai.best/en/music_titles.json", update_interval=timedelta(days=1))
 
+default_musicmetas_json = WebJsonRes(
+    "MusicMeta",
+    config.get("deck.music_meta_url"),
+    update_interval=timedelta(hours=1),
+)
+music_meta_urls = config.get("deck.music_meta_urls", {})
+region_musicmetas_json: dict[str, WebJsonRes] = {
+    region: WebJsonRes(
+        f"{region.upper()}-MusicMeta",
+        url,
+        update_interval=timedelta(hours=1),
+    )
+    for region, url in music_meta_urls.items()
+}
+
+
+def get_musicmetas_json(region: str) -> WebJsonRes:
+    return region_musicmetas_json.get(region, default_musicmetas_json)
+
 
 DIFF_NAMES = [
     ("easy", "Easy", "EASY", "ez", "EZ"),
@@ -123,6 +142,185 @@ class ChartBpmData:
     bpm_events: List[Dict[str, float]]
     bar_count: int
     duration: float
+
+
+LEADERBOARD_TARGET_KEYS = {
+    'score': '{live_type}_score',
+    'pt': '{live_type}_pt',
+    'pt/time': '{live_type}_pt_per_hour',
+    'tps': 'tps',
+    'time': 'music_time',
+}
+LEADERBOARD_ALL_LIVE_TYPES = (
+    'solo',
+    'auto',
+    'multi',
+)
+LEADERBOARD_DIFF_PRIORITY = {
+    "master": 6,
+    "append": 5,
+    "expert": 4,
+    "hard": 3,
+    "normal": 2,
+    "easy": 1,
+}
+
+
+async def get_music_leaderboard_data(
+    region: str,
+    skills: list[float],
+    skill_strategy: str,
+    deck_bonus: float,
+    play_interval: float,
+    power: int,
+    keep_one_diff_per_music: bool,
+    ascend: bool,
+    target: str | list[str] = 'all',
+    live_type: str | list[str] = 'all',
+) -> list[dict]:
+    musicmetas_json = get_musicmetas_json(region)
+    musicmetas = await musicmetas_json.get(raise_on_no_data=False)
+    if not musicmetas:
+        return []
+
+    if target == 'all':
+        target_keys = LEADERBOARD_TARGET_KEYS
+    else:
+        if isinstance(target, str):
+            target = [target]
+        target_keys = {t: LEADERBOARD_TARGET_KEYS[t] for t in target if t in LEADERBOARD_TARGET_KEYS}
+
+    if live_type == 'all':
+        live_types = LEADERBOARD_ALL_LIVE_TYPES
+    else:
+        if isinstance(live_type, str):
+            live_type = [live_type]
+        live_types = [lt for lt in live_type if lt in LEADERBOARD_ALL_LIVE_TYPES]
+
+    if skill_strategy == 'max':
+        sorted_skills = sorted(skills, reverse=True)
+    elif skill_strategy == 'min':
+        sorted_skills = sorted(skills)
+    elif skill_strategy == 'avg':
+        avg_skill = sum(skills) / len(skills)
+        sorted_skills = [avg_skill] * 5
+    else:
+        raise Exception(f"不支持的技能排序策略: {skill_strategy}")
+
+    rows: list[dict] = []
+    for meta in musicmetas:
+        mid = meta['music_id']
+        diff = meta['difficulty']
+        music_time = meta['music_time']
+        tap_count = meta['tap_count']
+        event_rate = meta['event_rate']
+        base_score = meta['base_score']
+        base_score_auto = meta['base_score_auto']
+        skill_score_solo = meta['skill_score_solo']
+        skill_score_auto = meta['skill_score_auto']
+        skill_score_multi = meta['skill_score_multi']
+        fever_score = meta['fever_score']
+
+        tps = tap_count / music_time
+
+        solo_skill = 0.0
+        sorted_skill_score_solo = sorted(skill_score_solo[:5], reverse=True)
+        for i in range(5):
+            solo_skill += sorted_skill_score_solo[i] * sorted_skills[i]
+        solo_skill += skill_score_solo[5] * skills[0]
+
+        auto_skill = 0.0
+        sorted_skill_score_auto = sorted(skill_score_auto[:5], reverse=True)
+        for i in range(5):
+            auto_skill += sorted_skill_score_auto[i] * sorted_skills[i]
+        auto_skill += skill_score_auto[5] * skills[0]
+
+        multi_skill = 0.0
+        sorted_skill_score_multi = sorted(skill_score_multi[:5], reverse=True)
+        for i in range(5):
+            multi_skill += sorted_skill_score_multi[i] * sorted_skills[i]
+        multi_skill += skill_score_multi[5] * skills[0]
+
+        solo_score = base_score + solo_skill
+        auto_score = base_score_auto + auto_skill
+        multi_score = base_score + multi_skill + fever_score * 0.5 + 0.01875
+
+        def calc_real_score_and_pt(data: dict, target_live_type: str, target_power: int):
+            active_bonus = 0.0
+            if target_live_type == 'multi':
+                active_bonus = 5 * 0.015 * target_power
+            data[f'{target_live_type}_real_score'] = int(data[f'{target_live_type}_score'] * target_power * 4 + active_bonus)
+
+            real_event_rate = data['event_rate'] / 100.0
+            deck_rate = deck_bonus / 100.0 + 1
+
+            match target_live_type:
+                case 'solo':
+                    base = 100 + int(data['solo_real_score'] / 20000)
+                    data['solo_pt'] = int(base * real_event_rate * deck_rate)
+                case 'auto':
+                    base = 100 + int(data['auto_real_score'] / 20000)
+                    data['auto_pt'] = int(base * real_event_rate * deck_rate)
+                case 'multi':
+                    other_score = data['multi_real_score'] * 4
+                    base = 110 + int(data['multi_real_score'] / 17000) + min(13, int(other_score / 340000))
+                    data['multi_pt'] = int(base * real_event_rate * deck_rate)
+
+            play_time_total = data['music_time'] + play_interval
+            data['play_count_per_hour'] = 3600 / play_time_total
+            data[f'{target_live_type}_pt_per_hour'] = data[f'{target_live_type}_pt'] * data['play_count_per_hour']
+
+        data = {
+            'music_id': mid,
+            'difficulty': diff,
+            'diff_priority': LEADERBOARD_DIFF_PRIORITY[diff] * (-1 if ascend else 1),
+            'music_time': music_time,
+            'tps': tps,
+            'event_rate': event_rate,
+            'solo_score': solo_score,
+            'auto_score': auto_score,
+            'multi_score': multi_score,
+        }
+        for live_type_key in live_types:
+            calc_real_score_and_pt(data, live_type_key, power)
+        rows.append(data)
+
+    def sort_rows(sort_target: str, sort_live_type: str):
+        sort_key = target_keys[sort_target]
+        if '{live_type}' in sort_key:
+            sort_key = sort_key.format(live_type=sort_live_type)
+        rows.sort(key=lambda x: (x[sort_key], x['diff_priority']), reverse=not ascend)
+        rank_key = f"{sort_live_type}_{sort_target}_rank"
+        if keep_one_diff_per_music:
+            seen_mids, cur_rank = set(), 1
+            for row in rows:
+                mid = row['music_id']
+                if mid in seen_mids:
+                    row[rank_key] = None
+                else:
+                    seen_mids.add(mid)
+                    row[rank_key] = cur_rank
+                    cur_rank += 1
+        else:
+            for i, row in enumerate(rows):
+                row[rank_key] = i + 1
+
+    for live_type_key in live_types:
+        for target_key in target_keys.keys():
+            sort_rows(target_key, live_type_key)
+
+    return rows
+
+
+_last_musicmeta_hash = None
+_last_music_leaderboard_info: dict[tuple[str, str, int], dict] = {}
+
+LEADERBOARD_TARGET_NAMES = {'score': "分数", 'pt': "PT", 'pt/time': "时速"}
+LEADERBOARD_LIVETYPE_NAMES = {'solo': "单人", 'multi': "多人", 'auto': "AUTO"}
+LEADERBOARD_LIVETYPE_PLAY_INTERVAL = {'solo': 28.0, 'auto': 28.0, 'multi': 45.2}
+LEADERBOARD_LIVETYPE_SKILLS = {'solo': [1.2] * 5, 'auto': [1.2] * 5, 'multi': [2.0] * 5}
+LEADERBOARD_DECK_BONUS = 400.0
+LEADERBOARD_POWER = 300000
 
 
 # ======================= 别名处理 ======================= #
@@ -910,6 +1108,50 @@ async def compose_music_detail_image(ctx: SekaiHandlerContext, mid: int, title: 
         caption_vocals[caption].append(vocal)
 
     limited_times = await get_music_limited_times(ctx, mid)
+    
+    global _last_musicmeta_hash, _last_music_leaderboard_info
+    musicmeta_hash = None
+    musicmetas_json = get_musicmetas_json(ctx.region)
+    if musicmetas_json:
+        musicmeta_hash = await musicmetas_json.get_hash(raise_on_no_data=False)
+    live_type_keys = list(LEADERBOARD_LIVETYPE_NAMES.keys())
+    target_keys = list(LEADERBOARD_TARGET_NAMES.keys())
+    if musicmeta_hash and musicmeta_hash != _last_musicmeta_hash:
+        _last_musicmeta_hash = musicmeta_hash
+        _last_music_leaderboard_info = {}
+        for live_type in live_type_keys:
+            for target in target_keys:
+                leaderboard = await get_music_leaderboard_data(
+                    region=ctx.region,
+                    skills=LEADERBOARD_LIVETYPE_SKILLS[live_type],
+                    skill_strategy='avg',
+                    deck_bonus=LEADERBOARD_DECK_BONUS,
+                    play_interval=LEADERBOARD_LIVETYPE_PLAY_INTERVAL[live_type],
+                    power=LEADERBOARD_POWER,
+                    keep_one_diff_per_music=True,
+                    ascend=False,
+                    target=target,
+                    live_type=live_type,
+                )
+                for item in leaderboard:
+                    rank = item.get(f"{live_type}_{target}_rank", None)
+                    if rank:
+                        info = {'rank': rank, 'diff': item['difficulty']}
+                        match target:
+                            case 'score':
+                                info['value'] = f"{item[f'{live_type}_score'] * 100:.1f}%"
+                            case 'pt':
+                                info['value'] = str(item[f'{live_type}_pt'])
+                            case 'pt/time':
+                                info['value'] = f"{item[f'{live_type}_pt_per_hour'] / 10000:.2f}w/h"
+                        _last_music_leaderboard_info[(live_type, target, item['music_id'])] = info
+
+    leaderboard_music_num = max(1, len(_last_music_leaderboard_info) // max(1, len(LEADERBOARD_LIVETYPE_NAMES) * len(LEADERBOARD_TARGET_NAMES)))
+    leaderboard_matrix: list[list[dict | None]] = []
+    for live_type in live_type_keys:
+        leaderboard_matrix.append([])
+        for target in target_keys:
+            leaderboard_matrix[-1].append(_last_music_leaderboard_info.get((live_type, target, mid), None))
         
     with Canvas(bg=SEKAI_BLUE_BG).set_padding(BG_PADDING) as canvas:
         with VSplit().set_content_align('lt').set_item_align('lt').set_sep(16).set_item_bg(roundrect_bg()):
@@ -989,6 +1231,49 @@ async def compose_music_detail_image(ctx: SekaiHandlerContext, mid: int, title: 
                             if count is None: continue
                             t = TextBox(f"{count} combo", TextStyle(font=DEFAULT_BOLD_FONT, size=18, color=(80, 80, 80, 255)), line_count=1)
                             t.set_size((gw, 40)).set_content_align('c').set_bg(roundrect_bg(fill=light_diff_color[i], radius=6))        
+
+                # 排行榜
+                if _last_music_leaderboard_info:
+                    with Grid(row_count=len(live_type_keys) + 1, item_size_mode='flex').set_sep(4, 4).set_padding(16).set_content_align('c').set_item_align('c'):
+                        th_w, th_h = 80, 36
+                        tr_w, tr_h = 130, 36
+
+                        Spacer(w=th_w, h=th_h).set_bg(FillBg((255, 255, 255, 100)))
+                        for target in target_keys:
+                            TextBox(
+                                LEADERBOARD_TARGET_NAMES[target],
+                                TextStyle(DEFAULT_BOLD_FONT, 18, (50, 50, 50)),
+                            ).set_bg(FillBg((255, 255, 255, 100))).set_size((tr_w, th_h)).set_content_align('c')
+
+                        for i, live_type in enumerate(live_type_keys):
+                            TextBox(
+                                LEADERBOARD_LIVETYPE_NAMES[live_type],
+                                TextStyle(DEFAULT_BOLD_FONT, 18, (50, 50, 50)),
+                            ).set_bg(FillBg((255, 255, 255, 50))).set_size((th_w, th_h)).set_content_align('c')
+                            for j, target in enumerate(target_keys):
+                                info = leaderboard_matrix[i][j]
+                                if info:
+                                    rank_ratio = (info['rank'] - 1) / max(1, leaderboard_music_num - 1)
+                                    text1, text2 = f"#{info['rank']}", info['value']
+                                    text_color = DIFF_COLORS[info['diff']]
+                                else:
+                                    rank_ratio = 0.5
+                                    text1, text2 = "-", None
+                                    text_color = (50, 50, 50)
+
+                                green = (200, 255, 200, 75)
+                                yellow = (255, 200, 150, 75)
+                                red = (255, 150, 150, 50)
+                                if rank_ratio <= 0.5:
+                                    bg_color = lerp_color(green, yellow, rank_ratio)
+                                else:
+                                    bg_color = lerp_color(yellow, red, rank_ratio - 0.5)
+
+                                with Frame().set_bg(FillBg(bg_color)).set_size((tr_w, tr_h)).set_content_align('c'):
+                                    with HSplit().set_content_align('b').set_item_align('b').set_sep(2):
+                                        TextBox(text1, TextStyle(DEFAULT_BOLD_FONT, 18, text_color, use_shadow=True))
+                                        if text2:
+                                            TextBox(text2, TextStyle(DEFAULT_FONT, 12, (50, 50, 50))).set_offset((0, -1))
 
                 # 别名
                 aliases = MusicAliasDB.get_instance().get_aliases(mid)
@@ -1247,6 +1532,15 @@ async def get_music_audio_length(ctx: SekaiHandlerContext, mid: int) -> Optional
     key = f"{ctx.region}_{mid}"
     if key in music_audio_lengths:
         return timedelta(seconds=music_audio_lengths[key])
+    music_metas = None
+    musicmetas_json = get_musicmetas_json(ctx.region)
+    if musicmetas_json:
+        music_metas = await musicmetas_json.get(raise_on_no_data=False)
+    if music_metas and (item := find_by(music_metas, 'music_id', mid)):
+        length = item['music_time']
+        music_audio_lengths[key] = length
+        file_db.set("music_audio_lengths", music_audio_lengths)
+        return timedelta(seconds=length)
     path = await get_music_audio_mp3_path(ctx, mid)
     if not path:
         jp_ctx = SekaiHandlerContext.from_region("jp")
@@ -1264,7 +1558,7 @@ async def get_music_audio_length(ctx: SekaiHandlerContext, mid: int) -> Optional
     file_db.set("music_audio_lengths", music_audio_lengths)
     return timedelta(seconds=length)
 
-# 获取谱面时长（还有bug）
+# 获取谱面时长
 async def get_music_chart_length(ctx: SekaiHandlerContext, music_id: int, difficulty: str) -> Optional[timedelta]:
     music = await ctx.md.musics.find_by_id(music_id)
     assert_and_reply(music, f'曲目 {music_id} 不存在')
@@ -1274,7 +1568,8 @@ async def get_music_chart_length(ctx: SekaiHandlerContext, music_id: int, diffic
         return None
     from src.pjsekai import scores as pjsekai_scores
     score = pjsekai_scores.Score.open(sus_path, encoding='UTF-8')
-    return timedelta(seconds=float(score.timed_events[-1][0]))
+    bar = max(note.bar for note in score.notes)
+    return timedelta(seconds=float(score.get_time(bar)))
 
 # 合成简要歌曲列表图片
 async def compose_music_brief_list_image(

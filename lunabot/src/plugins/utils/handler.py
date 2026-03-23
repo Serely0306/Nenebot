@@ -19,9 +19,11 @@ from nonebot.adapters.onebot.v11.message import MessageSegment, Message
 import nonebot.adapters.onebot.v11.bot as bot_module
 from argparse import ArgumentParser
 import requests
+import inspect
 
 
 SUPERUSER_CFG = global_config.item('superuser')
+ALLOW_CODE_EXEC_CFG = global_config.item('allow_code_exec')
 
 DEFAULT_LQ_IMAGE_QUALITY_CFG = global_config.item('msg_send.low_quality_image.default_quality')
 DEFAULT_LQ_IMAGE_SUBSAMPLING_CFG = global_config.item('msg_send.low_quality_image.default_subsampling')
@@ -295,13 +297,15 @@ async def get_group_list(bot: Bot) -> List[dict]:
     """
     return await bot.call_api('get_group_list')
 
-async def get_all_bot_group_list() -> list[dict]:
+async def get_all_bot_group_list(allow_exception: bool = True) -> list[dict]:
     groups = []
     for bot in get_all_bots():
         try:
             bot_groups = await get_group_list(bot)
             groups.extend(bot_groups)
         except Exception as e:
+            if not allow_exception:
+                raise e
             utils_logger.warning(f'获取Bot {bot.self_id} 的群列表失败: {get_exc_desc(e)}')
     # 去重
     unique_groups = {}
@@ -397,6 +401,7 @@ async def get_image_cq(
     subsampling: int | ConfigItem = DEFAULT_LQ_IMAGE_SUBSAMPLING_CFG,
     optimize: bool | ConfigItem = DEFAULT_LQ_IMAGE_OPTIMIZE_CFG,
     send_local_file_as_is: bool = False,
+    send_url_as_is: bool = False,
 ):
     """
     获取图片的cq码用于发送
@@ -405,6 +410,8 @@ async def get_image_cq(
     try:
         # 如果是远程图片
         if isinstance(image, str) and image.startswith("http"):
+            if send_url_as_is:
+                return f'[CQ:image,file={image}]'
             image = await download_image(image)
             return await get_image_cq(image, *args)
         # 如果是bytes
@@ -1752,6 +1759,207 @@ class GroupBlackList:
         return allow_private
     
 
+async def _call_maybe_async(func: Callable, *args, **kwargs):
+    ret = func(*args, **kwargs)
+    if inspect.isawaitable(ret):
+        return await ret
+    return ret
+
+
+@dataclass
+class CurrentGroupInfo:
+    group_id: int
+    group_member_ids: set[int]
+
+
+class CurrentGroupInfoDict(dict[int, CurrentGroupInfo]):
+    pass
+
+
+@dataclass
+class QuitedGroupUserInfo:
+    quited_group_ids: list[int] = field(default_factory=list)
+    quited_group_users: list[tuple[int, int]] = field(default_factory=list)
+
+
+_on_collect_quit_group_handlers: list[Callable[[CurrentGroupInfoDict], Any]] = []
+
+
+def on_collect_quited_group(func: Callable[[CurrentGroupInfoDict], QuitedGroupUserInfo]):
+    if asyncio.iscoroutinefunction(func):
+        async def wrapper(current_groups: CurrentGroupInfoDict) -> QuitedGroupUserInfo:
+            return await func(current_groups)
+    else:
+        def wrapper(current_groups: CurrentGroupInfoDict) -> QuitedGroupUserInfo:
+            return func(current_groups)
+    _on_collect_quit_group_handlers.append(wrapper)
+    return wrapper
+
+
+_on_clean_quit_group_handlers: list[Callable[[CurrentGroupInfoDict], Any]] = []
+
+
+def on_clean_quited_group(func: Callable[[CurrentGroupInfoDict], Any]):
+    if asyncio.iscoroutinefunction(func):
+        async def wrapper(current_groups: CurrentGroupInfoDict):
+            await func(current_groups)
+    else:
+        def wrapper(current_groups: CurrentGroupInfoDict):
+            func(current_groups)
+    _on_clean_quit_group_handlers.append(wrapper)
+    return wrapper
+
+
+DEFAULT_CONFIRM_ACTIONS_TIMEOUT_CFG = global_config.item('confirm_actions_timeout_seconds')
+_need_confirm_actions: dict[tuple[int, int | None], tuple[datetime, Callable[[Any], Any]]] = {}
+
+
+async def add_need_confirm_action(
+    ctx: 'HandlerContext',
+    action: Callable[[Any], Any],
+    additional_msg: str = None,
+    timeout: timedelta = None,
+    fold_msg: bool = True,
+):
+    key = (ctx.user_id, ctx.group_id or None)
+    if timeout is None:
+        timeout = timedelta(seconds=DEFAULT_CONFIRM_ACTIONS_TIMEOUT_CFG.get())
+    _need_confirm_actions[key] = (datetime.now() + timeout, action)
+    msg = '请发送"/确认"或"/取消"以继续操作'
+    if additional_msg:
+        msg = f'{additional_msg}\n{msg}'
+    if fold_msg:
+        await ctx.asend_fold_msg_adaptive(msg, need_reply=True)
+    else:
+        await ctx.asend_reply_msg(msg)
+
+
+@repeat_with_interval(10, "清空过期确认操作", utils_logger)
+async def _clean_expired_confirm_actions():
+    now = datetime.now()
+    for key, (expire_time, _) in list(_need_confirm_actions.items()):
+        if now >= expire_time:
+            del _need_confirm_actions[key]
+
+
+class GroupSubHelper(SubHelper):
+    def __init__(self, name: str, db: FileDB, logger: Logger):
+        super().__init__(name, db, logger, key_fn=lambda x: str(x), val_fn=lambda x: int(x))
+
+        @on_collect_quited_group
+        def _collect_quited_group(current_groups: CurrentGroupInfoDict) -> QuitedGroupUserInfo:
+            all_subs = self.get_all().copy()
+            return QuitedGroupUserInfo(
+                quited_group_ids=list(set(gid for gid in all_subs if gid not in current_groups)),
+            )
+        
+        @on_clean_quited_group
+        def _clean_quited_group(current_groups: CurrentGroupInfoDict):
+            all_subs = self.get_all().copy()
+            for gid in all_subs:
+                if gid not in current_groups:
+                    self.unsub(gid)
+
+    def is_subbed(self, group_id: int):
+        return super().is_subbed(group_id)
+    
+    def sub(self, group_id: int):
+        return super().sub(group_id)
+    
+    def unsub(self, group_id: int):
+        return super().unsub(group_id)
+    
+    def get_all(self) -> list[int]:
+        return super().get_all()
+    
+    def clear(self):
+        super().clear()
+
+
+class GroupUserSubHelper(SubHelper):
+    def __init__(self, name: str, db: FileDB, logger: Logger):
+        super().__init__(
+            name,
+            db,
+            logger,
+            key_fn=lambda user_id, group_id: f"{user_id}@{group_id}",
+            val_fn=lambda key: list(map(int, key.split('@'))),
+        )
+
+        @on_collect_quited_group
+        def _collect_quited_group(current_groups: CurrentGroupInfoDict) -> QuitedGroupUserInfo:
+            all_subs = self.get_all().copy()
+            quited_groups = []
+            quited_group_users = []
+            for uid, gid in all_subs:
+                if gid not in current_groups:
+                    quited_groups.append(gid)
+                elif uid not in current_groups[gid].group_member_ids:
+                    quited_group_users.append((gid, uid))
+            return QuitedGroupUserInfo(
+                quited_group_ids=quited_groups,
+                quited_group_users=quited_group_users,
+            )
+
+        @on_clean_quited_group
+        def _clean_quited_group(current_groups: CurrentGroupInfoDict):
+            all_subs = self.get_all().copy()
+            for uid, gid in all_subs:
+                if gid not in current_groups or uid not in current_groups[gid].group_member_ids:
+                    self.unsub(uid, gid)
+
+    def is_subbed(self, user_id: int, group_id: int):
+        return super().is_subbed(user_id, group_id)
+    
+    def sub(self, user_id: int, group_id: int):
+        return super().sub(user_id, group_id)
+    
+    def unsub(self, user_id: int, group_id: int):
+        return super().unsub(user_id, group_id)
+    
+    def get_all(self) -> list[tuple[int, int]]:
+        return super().get_all()
+    
+    def clear(self):
+        super().clear()
+
+
+def _register_group_whitelist_cleanup(gwl: GroupWhiteList):
+    if getattr(gwl, "_quit_group_cleanup_registered", False):
+        return
+    gwl._quit_group_cleanup_registered = True
+
+    @on_collect_quited_group
+    def _collect_quited_group(current_groups: CurrentGroupInfoDict) -> QuitedGroupUserInfo:
+        return QuitedGroupUserInfo(
+            quited_group_ids=[gid for gid in gwl.get() if gid not in current_groups],
+        )
+
+    @on_clean_quited_group
+    def _clean_quited_group(current_groups: CurrentGroupInfoDict):
+        for gid in gwl.get().copy():
+            if gid not in current_groups:
+                gwl.remove(gid)
+
+
+def _register_group_blacklist_cleanup(gbl: GroupBlackList):
+    if getattr(gbl, "_quit_group_cleanup_registered", False):
+        return
+    gbl._quit_group_cleanup_registered = True
+
+    @on_collect_quited_group
+    def _collect_quited_group(current_groups: CurrentGroupInfoDict) -> QuitedGroupUserInfo:
+        return QuitedGroupUserInfo(
+            quited_group_ids=[gid for gid in gbl.get() if gid not in current_groups],
+        )
+
+    @on_clean_quited_group
+    def _clean_quited_group(current_groups: CurrentGroupInfoDict):
+        for gid in gbl.get().copy():
+            if gid not in current_groups:
+                gbl.remove(gid)
+
+
 _gwls: Dict[str, GroupWhiteList] = {}
 def get_group_white_list(
     db: FileDB, 
@@ -1766,6 +1974,7 @@ def get_group_white_list(
         global _gwls
         if name not in _gwls:
             _gwls[name] = GroupWhiteList(db, logger, name, superuser, on_func, off_func)
+            _register_group_whitelist_cleanup(_gwls[name])
         return _gwls[name]
     return GroupWhiteList(db, logger, name, superuser, on_func, off_func)
 
@@ -1783,6 +1992,7 @@ def get_group_black_list(
         global _gbls
         if name not in _gbls:
             _gbls[name] = GroupBlackList(db, logger, name, superuser, on_func, off_func)
+            _register_group_blacklist_cleanup(_gbls[name])
         return _gbls[name]
     return GroupBlackList(db, logger, name, superuser, on_func, off_func)
 
@@ -2375,6 +2585,8 @@ class CmdHandler:
 
 # ============================ 指令处理 ============================ #
 
+cd = ColdDown(utils_file_db, utils_logger, cold_down_name='global_cmd')
+
 # 获取当前群聊开启和关闭的服务 或 获取某个服务在哪些群聊开启
 _handler = CmdHandler(['/service', '/查服务'], utils_logger)
 _handler.check_superuser()
@@ -2529,7 +2741,123 @@ async def _(ctx: HandlerContext):
         msg += f"{key}: {mtime.strftime('%Y-%m-%d %H:%M:%S')}\n"
     return await ctx.asend_reply_msg(msg.strip())
 
-# 安全模式
+# 确认/取消操作
+_handler = CmdHandler(['/confirm', '/确认'], utils_logger)
+_handler.check_cdrate(cd)
+@_handler.handle()
+async def _(ctx: HandlerContext):
+    key = (ctx.user_id, ctx.group_id or None)
+    assert_and_reply(key in _need_confirm_actions, "当前没有需要确认的操作")
+    _, action = _need_confirm_actions.pop(key)
+    await _call_maybe_async(action, ctx)
+
+_handler = CmdHandler(['/cancel', '/取消'], utils_logger)
+_handler.check_cdrate(cd)
+@_handler.handle()
+async def _(ctx: HandlerContext):
+    key = (ctx.user_id, ctx.group_id or None)
+    assert_and_reply(key in _need_confirm_actions, "当前没有需要取消的操作")
+    _need_confirm_actions.pop(key)
+    await ctx.asend_reply_msg("已取消最近的操作")
+
+_handler = CmdHandler(['/clean group', '/清理退群'], utils_logger)
+_handler.check_superuser()
+@_handler.handle()
+async def _(ctx: HandlerContext):
+    current_groups: CurrentGroupInfoDict = {}
+    for bot in get_all_bots():
+        for group_id in await get_group_ids(bot, refresh=True):
+            group_member_ids = [m['user_id'] for m in await get_group_users(bot, group_id)]
+            current_groups[group_id] = CurrentGroupInfo(
+                group_id=group_id,
+                group_member_ids=set(group_member_ids),
+            )
+
+    quited_groups: set[int] = set()
+    quited_group_users: set[tuple[int, int]] = set()
+    for func in _on_collect_quit_group_handlers:
+        ret = await _call_maybe_async(func, current_groups)
+        if not ret:
+            continue
+        quited_groups.update(ret.quited_group_ids)
+        quited_group_users.update(ret.quited_group_users)
+
+    if not quited_groups and not quited_group_users:
+        return await ctx.asend_reply_msg("没有需要清理的已退出群聊数据")
+
+    async def clean(confirm_ctx: HandlerContext):
+        for func in _on_clean_quit_group_handlers:
+            await _call_maybe_async(func, current_groups)
+        await confirm_ctx.asend_reply_msg("成功清理已退出群聊数据")
+
+    msg_lines = ["发现以下已退出群聊数据:"]
+    for gid in sorted(quited_groups):
+        msg_lines.append(str(gid))
+    group_exited_users: dict[int, list[int]] = {}
+    for gid, uid in sorted(quited_group_users):
+        group_exited_users.setdefault(gid, []).append(uid)
+    for gid, uids in group_exited_users.items():
+        msg_lines.append(f"{gid}: {' | '.join(str(uid) for uid in uids)}")
+    await add_need_confirm_action(ctx, clean, additional_msg="\n".join(msg_lines))
+
+exec_code = CmdHandler(['/exec', '/执行'], utils_logger)
+exec_code.check_superuser()
+@exec_code.handle()
+async def _(ctx: HandlerContext):
+    if not ALLOW_CODE_EXEC_CFG.get():
+        return await ctx.asend_reply_msg("该功能未在配置中启用")
+    code = ctx.get_args().strip()
+    assert_and_reply(code, "请输入要运行的代码")
+    try:
+        lines = code.rstrip().split('\n')
+        if not lines:
+            result = None
+        else:
+            last_line = lines[-1].strip()
+            statement_keywords = (
+                'def ', 'class ', 'if ', 'for ', 'while ', 'with ', 'try ', 'except ',
+                'finally:', 'else:', 'elif ', 'import ', 'from ', 'return ', 'break ',
+                'continue ', 'pass ', 'raise ', 'assert ', 'del ', 'global ', 'nonlocal ',
+            )
+
+            is_assignment = False
+            if '=' in last_line:
+                import re
+                if re.search(r'[^=<>!+\-*/%]=[^=]', last_line.split('#')[0]):
+                    is_assignment = True
+
+            is_expression = (
+                last_line
+                and not any(last_line.startswith(kw) for kw in statement_keywords)
+                and not is_assignment
+            )
+
+            if is_expression:
+                body_lines = lines[:-1]
+                last_expr_content = lines[-1].strip()
+                if body_lines:
+                    indented_body = '\n'.join('    ' + line for line in body_lines)
+                    wrapped_code = f'{indented_body}\n    return {last_expr_content}'
+                else:
+                    wrapped_code = f'    return {last_expr_content}'
+            else:
+                wrapped_code = '\n'.join('    ' + line for line in lines)
+
+            async_func_code = f'async def _exec_code_func():\n{wrapped_code}'
+            utils_logger.info(f"执行代码:\n{async_func_code}")
+            local_vars = {}
+            exec(async_func_code, globals(), local_vars)
+            result = await local_vars['_exec_code_func']()
+
+        result = str(result)
+        output_limit = 2048
+        if len(result) > output_limit:
+            omit_len = len(result) - output_limit
+            result = result[:output_limit] + f"...(输出过长，已省略{omit_len}字符)"
+        await ctx.asend_fold_msg_adaptive(f"执行代码成功:\n{result}")
+    except Exception:
+        await ctx.asend_fold_msg_adaptive(f"执行代码失败\n{traceback.format_exc()}")
+
 _handler = CmdHandler(['/safe'], utils_logger)
 _handler.check_superuser()
 @_handler.handle()
