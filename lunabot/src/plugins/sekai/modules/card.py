@@ -1048,44 +1048,80 @@ async def compose_createdAt_image(ctx: SekaiHandlerContext, qid: int, cards: dic
             owned_cards.append(card)
 
     assert_and_reply(owned_cards, "查询不到符合条件的已拥有卡牌")
-    owned_cards.sort(key=lambda x: (-x['createdAt'], -x['id']))
 
-    async def get_owned_thumb(card):
-        pcard = card['pcard']
-        if pcard:
-            return await get_card_full_thumbnail(ctx, card, pcard=pcard)
-        after_training = has_after_training(card) and use_after_training
-        if only_has_after_training(card):
-            after_training = True
-        return await get_card_full_thumbnail(ctx, card, after_training)
+    async def get_thumb(card):
+        return await get_card_full_thumbnail(ctx, card, pcard=card['pcard'])
+    card_imgs = await batch_gather(*[get_thumb(card) for card in owned_cards])
 
-    thumbs = await batch_gather(*[get_owned_thumb(card) for card in owned_cards])
-    for card, thumb in zip(owned_cards, thumbs):
-        card['img'] = thumb
+    for card, img in zip(owned_cards, card_imgs):
+        card['img'] = img
 
-    title_style = TextStyle(font=DEFAULT_BOLD_FONT, size=24, color=(40, 40, 40))
-    text_style = TextStyle(font=DEFAULT_FONT, size=20, color=(60, 60, 60))
-    sub_style = TextStyle(font=DEFAULT_FONT, size=16, color=(80, 80, 80))
+    sz = 100
+    item_width = 280
+    tz_utc_8 = timezone(timedelta(hours=8))
+    style_note = TextStyle(font=DEFAULT_BOLD_FONT, size=18, color=(0, 0, 0))
+
+    def draw_time_card(card):
+        dt = datetime.fromtimestamp(card['createdAt'] / 1000, tz=tz_utc_8)
+        date_str = dt.strftime('%Y-%m-%d')
+        time_str = dt.strftime('%H:%M:%S')
+
+        with HSplit().set_content_align('lt').set_item_align('lt').set_sep(12).set_w(item_width):
+            with Frame().set_size((sz, sz)).set_content_align('rt'):
+                ImageBox(card['img'], size=(sz, sz))
+                supply_name = card.get('supply_show_name')
+                if supply_name in ['期间限定', 'WL限定', '联动限定']:
+                    ImageBox(ctx.static_imgs.get("card/term_limited.png"), size=(int(sz * 0.6), None))
+                elif supply_name in ['CFes限定', 'BFes限定']:
+                    ImageBox(ctx.static_imgs.get("card/fes_limited.png"), size=(int(sz * 0.6), None))
+
+            with VSplit().set_content_align('lt').set_item_align('lt').set_sep(4):
+                if show_id:
+                    TextBox(f"ID: {card['id']}", TextStyle(font=DEFAULT_FONT, size=14, color=(100, 100, 100, 255)))
+                TextBox(date_str, TextStyle(font=DEFAULT_BOLD_FONT, size=20, color=BLACK))
+                TextBox(time_str, TextStyle(font=DEFAULT_FONT, size=16, color=(80, 80, 80, 255)))
 
     with Canvas(bg=SEKAI_BLUE_BG).set_padding(BG_PADDING) as canvas:
         with VSplit().set_content_align('lt').set_item_align('lt').set_sep(16):
             await get_detailed_profile_card(ctx, profile, pmsg)
-            with VSplit().set_content_align('lt').set_item_align('lt').set_sep(12).set_padding(16).set_bg(roundrect_bg()):
-                current_year = None
-                for card in owned_cards:
-                    created_at = datetime.fromtimestamp(card['createdAt'] / 1000)
-                    if group_by_year and created_at.year != current_year:
-                        current_year = created_at.year
-                        TextBox(str(current_year), title_style).set_padding((0, 8))
+            with VSplit().set_content_align('l').set_item_align('l').set_sep(16).set_item_bg(roundrect_bg()):
+                msg = "考虑到布局排版，当前模式仅支持展示单角色卡牌的获取时间记录\n"
+                msg += "若要查看其他角色的获取时间，请在指令中指定对应的角色名（如: miku、一歌）\n"
+                msg += "若要切换到按年份排布视图，请加上相关参数，如“/卡牌一览 miku 获取时间 按年份”"
+                TextBox(msg, style_note, use_real_line_count=True).set_padding(12)
 
-                    with HSplit().set_content_align('c').set_item_align('c').set_sep(12).set_padding(8).set_bg(roundrect_bg(fill=(255, 255, 255, 120), radius=8)):
-                        ImageBox(card['img'], size=(84, 84), shadow=True)
-                        with VSplit().set_content_align('lt').set_item_align('lt').set_sep(6):
-                            title = f"#{card['id']} {card['prefix']}" if show_id else card['prefix']
-                            if card.get('supply_show_name'):
-                                title += f"  [{card['supply_show_name']}]"
-                            TextBox(title, text_style, use_real_line_count=True).set_w(620)
-                            TextBox(created_at.strftime('%Y-%m-%d %H:%M:%S'), sub_style)
+            if group_by_year:
+                years_dict = {}
+                for card in owned_cards:
+                    y = datetime.fromtimestamp(card['createdAt'] / 1000, tz=tz_utc_8).year
+                    years_dict.setdefault(y, []).append(card)
+
+                sorted_years = sorted(years_dict.keys(), reverse=True)
+
+                with HSplit().set_content_align('lt').set_item_align('lt').set_bg(roundrect_bg()).set_padding(16).set_sep(24):
+                    for year in sorted_years:
+                        cards_in_year = sorted(years_dict[year], key=lambda x: x['createdAt'], reverse=True)
+
+                        with VSplit().set_content_align('lt').set_item_align('lt').set_sep(12):
+                            with HSplit().set_content_align('c').set_item_align('c').set_w(item_width).set_bg(roundrect_bg()).set_padding(8):
+                                TextBox(f"—— {year} 年 ——", TextStyle(font=DEFAULT_BOLD_FONT, size=20, color=BLACK))
+
+                            for card in cards_in_year:
+                                draw_time_card(card)
+            else:
+                owned_cards.sort(key=lambda x: x['createdAt'], reverse=True)
+                cols = 3 if len(owned_cards) > 20 else 2 if len(owned_cards) > 8 else 1
+                row_count = math.ceil(len(owned_cards) / cols)
+
+                with HSplit().set_content_align('lt').set_item_align('lt').set_bg(roundrect_bg()).set_padding(16).set_sep(24):
+                    for c in range(cols):
+                        with VSplit().set_content_align('lt').set_item_align('lt').set_sep(12):
+                            for r in range(row_count):
+                                idx = c * row_count + r
+                                if idx < len(owned_cards):
+                                    draw_time_card(owned_cards[idx])
+                                else:
+                                    Spacer(w=item_width, h=sz)
 
     add_watermark(canvas)
     return await canvas.get_img()
