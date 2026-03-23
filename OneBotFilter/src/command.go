@@ -3,13 +3,16 @@ package onebotfilter
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 )
 
 type controlCommand struct {
-	Action  string
-	BotName string
-	GroupId int64
+	Action        string
+	BotName       string
+	MessageType   string
+	TargetID      int64
+	SourceGroupID int64
 }
 
 func extractMessageText(onebotMessage *OneBotMessage) string {
@@ -39,21 +42,68 @@ func parseControlCommand(onebotMessage *OneBotMessage) (*controlCommand, bool) {
 	}
 
 	parts := strings.Fields(messageText)
-	if len(parts) != 2 {
-		return nil, false
-	}
-	if parts[0] != "/启用" && parts[0] != "/禁用" {
-		return nil, false
-	}
-	if onebotMessage.Partial.GroupId == 0 {
+	if len(parts) < 2 || len(parts) > 3 {
 		return nil, false
 	}
 
-	return &controlCommand{
-		Action:  parts[0],
-		BotName: parts[1],
-		GroupId: onebotMessage.Partial.GroupId,
-	}, true
+	cmd := &controlCommand{
+		Action:        parts[0],
+		BotName:       parts[1],
+		SourceGroupID: onebotMessage.Partial.GroupId,
+	}
+
+	switch cmd.Action {
+	case "/启用":
+		if len(parts) != 2 || onebotMessage.Partial.GroupId == 0 {
+			return nil, false
+		}
+		cmd.MessageType = GROUP
+		cmd.TargetID = onebotMessage.Partial.GroupId
+		return cmd, true
+	case "/禁用":
+		if len(parts) != 2 || onebotMessage.Partial.GroupId == 0 {
+			return nil, false
+		}
+		cmd.MessageType = GROUP
+		cmd.TargetID = onebotMessage.Partial.GroupId
+		return cmd, true
+	case "/拉黑群聊", "/静默群聊", "/取消拉黑群聊", "/取消静默群聊":
+		cmd.MessageType = GROUP
+		targetID, ok := parseGroupTargetID(parts, onebotMessage.Partial.GroupId)
+		if !ok {
+			return nil, false
+		}
+		cmd.TargetID = targetID
+		return cmd, true
+	case "/拉黑用户", "/静默用户", "/取消拉黑用户", "/取消静默用户":
+		if len(parts) != 3 {
+			return nil, false
+		}
+		targetID, ok := parseNumericID(parts[2])
+		if !ok {
+			return nil, false
+		}
+		cmd.MessageType = PRIVATE
+		cmd.TargetID = targetID
+		return cmd, true
+	default:
+		return nil, false
+	}
+}
+
+func parseGroupTargetID(parts []string, defaultGroupID int64) (int64, bool) {
+	if len(parts) == 2 {
+		return defaultGroupID, defaultGroupID > 0
+	}
+	return parseNumericID(parts[2])
+}
+
+func parseNumericID(raw string) (int64, bool) {
+	id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }
 
 func (cfg CommandAuthConfig) isSuperUser(userID int64) bool {
@@ -117,32 +167,38 @@ func handleControlCommand(onebotMessage *OneBotMessage) (bool, map[string]interf
 			continue
 		}
 
-		var success bool
-		var responseMsg string
-		switch cmd.Action {
-		case "/禁用":
-			success = filter.AddToBlacklist(GROUP, cmd.GroupId)
-			if success {
-				responseMsg = fmt.Sprintf("%s禁用成功", cmd.BotName)
-			} else {
-				responseMsg = fmt.Sprintf("%s禁用失败", cmd.BotName)
-			}
-		case "/启用":
-			success = filter.RemoveFromBlacklist(GROUP, cmd.GroupId)
-			if success {
-				responseMsg = fmt.Sprintf("%s启用成功", cmd.BotName)
-			} else {
-				responseMsg = fmt.Sprintf("%s启用失败", cmd.BotName)
-			}
+		responseMsg := executeControlCommand(filter, cmd)
+		return true, buildGroupReply(cmd.SourceGroupID, responseMsg)
+	}
+
+	return true, buildGroupReply(cmd.SourceGroupID, fmt.Sprintf("未找到 bot：%s", cmd.BotName))
+}
+
+func executeControlCommand(filter *Filter, cmd *controlCommand) string {
+	switch cmd.Action {
+	case "/禁用":
+		if filter.AddToBlacklist(GROUP, cmd.TargetID) {
+			return fmt.Sprintf("%s禁用成功", cmd.BotName)
 		}
-
-		return true, buildGroupReply(cmd.GroupId, responseMsg)
+		return fmt.Sprintf("%s禁用失败", cmd.BotName)
+	case "/启用":
+		if filter.RemoveFromBlacklist(GROUP, cmd.TargetID) {
+			return fmt.Sprintf("%s启用成功", cmd.BotName)
+		}
+		return fmt.Sprintf("%s启用失败", cmd.BotName)
+	case "/拉黑群聊", "/静默群聊", "/拉黑用户", "/静默用户":
+		if filter.AddToBlacklist(cmd.MessageType, cmd.TargetID) {
+			return fmt.Sprintf("%s%s成功：%d", cmd.BotName, strings.TrimPrefix(cmd.Action, "/"), cmd.TargetID)
+		}
+		return fmt.Sprintf("%s%s失败：%d", cmd.BotName, strings.TrimPrefix(cmd.Action, "/"), cmd.TargetID)
+	case "/取消拉黑群聊", "/取消静默群聊", "/取消拉黑用户", "/取消静默用户":
+		if filter.RemoveFromBlacklist(cmd.MessageType, cmd.TargetID) {
+			return fmt.Sprintf("%s%s成功：%d", cmd.BotName, strings.TrimPrefix(cmd.Action, "/"), cmd.TargetID)
+		}
+		return fmt.Sprintf("%s%s失败：%d", cmd.BotName, strings.TrimPrefix(cmd.Action, "/"), cmd.TargetID)
+	default:
+		return "未识别的命令"
 	}
-
-	if CONFIG.Server.Debug {
-		log.Printf("命令目标过滤器不存在，已忽略：action=%s bot=%s group=%d\n", cmd.Action, cmd.BotName, cmd.GroupId)
-	}
-	return true, nil
 }
 
 func slicesContains(values []int64, target int64) bool {
