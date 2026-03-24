@@ -60,3 +60,15 @@ func ParseOneBotMessage(raw []byte) *OneBotMessage {
 
 	return oneBotMessage
 }
+
+func getMessageUserID(onebotMessage *OneBotMessage) int64 {
+	if onebotMessage == nil {
+		return 0
+	}
+
+	if onebotMessage.Partial.Sender.UserId > 0 {
+		return onebotMessage.Partial.Sender.UserId
+	}
+
+	return onebotMessage.Partial.UserId
+}

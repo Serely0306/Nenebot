@@ -48,13 +48,27 @@ var (
 	VP          *viper.Viper
 	CONFIG      Config
 	ALL_FILTERS []*Filter
-	configMutex sync.RWMutex // 用于保护配置文件
-	configPath  string       // 配置文件路径
+	configMutex sync.RWMutex
+	configPath  string
+	botInfoMu   sync.RWMutex
+	botNickname string
 )
 
 type WsMsg struct {
 	MsgType int
 	MsgData []byte
+}
+
+func SetBotNickname(nickname string) {
+	botInfoMu.Lock()
+	defer botInfoMu.Unlock()
+	botNickname = nickname
+}
+
+func GetBotNickname() string {
+	botInfoMu.RLock()
+	defer botInfoMu.RUnlock()
+	return botNickname
 }
 
 func AddFilter(filter *Filter) {
@@ -65,6 +79,7 @@ func AddFilter(filter *Filter) {
 	}
 	ALL_FILTERS = append(ALL_FILTERS, filter)
 }
+
 func RemoveFilter(name string) {
 	for i, f := range ALL_FILTERS {
 		if f.Name == name {
@@ -74,13 +89,11 @@ func RemoveFilter(name string) {
 	}
 }
 
-// 重新加载所有过滤器
 func ReLoadFilters() error {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
 
 	for _, botApp := range CONFIG.BotApps {
-		//检查配置
 		err := botApp.Check()
 		if err != nil {
 			log.Printf("bot %s 的配置文件校验失败：%v\n", botApp.Name, err)
@@ -98,7 +111,6 @@ func ReLoadFilters() error {
 	return nil
 }
 
-// UpdateBotAppConfig 更新BotApp的配置
 func UpdateBotAppConfig(botName string, updateFunc func(*BotAppsConfig)) bool {
 	configMutex.Lock()
 	defer configMutex.Unlock()
@@ -110,16 +122,13 @@ func UpdateBotAppConfig(botName string, updateFunc func(*BotAppsConfig)) bool {
 		if botApp.Name == botName {
 			found = true
 
-			// 保存原始配置用于比较
 			oldPrivateIds := make([]int64, len(botApp.Private.Ids))
 			copy(oldPrivateIds, botApp.Private.Ids)
 			oldGroupIds := make([]int64, len(botApp.Group.Ids))
 			copy(oldGroupIds, botApp.Group.Ids)
 
-			// 调用更新函数
 			updateFunc(&CONFIG.BotApps[i])
 
-			// 检查配置是否真的改变了
 			configChanged := false
 			if !slices.Equal(oldPrivateIds, CONFIG.BotApps[i].Private.Ids) {
 				configChanged = true
@@ -135,7 +144,6 @@ func UpdateBotAppConfig(botName string, updateFunc func(*BotAppsConfig)) bool {
 				return true
 			}
 
-			// 保存到文件
 			log.Printf("开始保存配置到文件...\n")
 			if err := saveConfigToFileLocked(); err != nil {
 				log.Printf("保存配置失败: %v\n", err)
@@ -143,7 +151,6 @@ func UpdateBotAppConfig(botName string, updateFunc func(*BotAppsConfig)) bool {
 			}
 			log.Printf("配置保存成功\n")
 
-			// 重新编译过滤器
 			for _, filter := range ALL_FILTERS {
 				if filter.Name == botName {
 					filter.Compile(CONFIG.BotApps[i])
@@ -163,7 +170,29 @@ func UpdateBotAppConfig(botName string, updateFunc func(*BotAppsConfig)) bool {
 	return false
 }
 
-// saveConfigToFileLocked 将当前配置保存到配置文件（假设已经持有锁）
+func UpdateServerConfig(updateFunc func(*ServerConfig)) bool {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	oldUserIDs := make([]int64, len(CONFIG.Server.Blocked.UserIDs))
+	copy(oldUserIDs, CONFIG.Server.Blocked.UserIDs)
+	oldGroupIDs := make([]int64, len(CONFIG.Server.Blocked.GroupIDs))
+	copy(oldGroupIDs, CONFIG.Server.Blocked.GroupIDs)
+
+	updateFunc(&CONFIG.Server)
+
+	if slices.Equal(oldUserIDs, CONFIG.Server.Blocked.UserIDs) && slices.Equal(oldGroupIDs, CONFIG.Server.Blocked.GroupIDs) {
+		return true
+	}
+
+	if err := saveConfigToFileLocked(); err != nil {
+		log.Printf("保存服务端配置失败: %v\n", err)
+		return false
+	}
+
+	return true
+}
+
 func saveConfigToFileLocked() error {
 	if configPath == "" {
 		log.Printf("配置文件路径为空\n")
@@ -172,13 +201,11 @@ func saveConfigToFileLocked() error {
 
 	log.Printf("正在保存配置文件到: %s\n", configPath)
 
-	// 检查文件是否存在
 	if _, err := os.Stat(configPath); err != nil {
 		log.Printf("配置文件不存在或无法访问: %v\n", err)
 		return fmt.Errorf("配置文件不存在或无法访问: %v", err)
 	}
 
-	// 备份原文件
 	backupPath := configPath + ".bak"
 	if err := copyFile(configPath, backupPath); err != nil {
 		log.Printf("备份配置文件失败: %v\n", err)
@@ -186,7 +213,6 @@ func saveConfigToFileLocked() error {
 		log.Printf("已备份原配置文件到: %s\n", backupPath)
 	}
 
-	// 使用yaml库保存配置，保持格式
 	data, err := yaml.Marshal(&CONFIG)
 	if err != nil {
 		log.Printf("序列化配置失败: %v\n", err)
@@ -195,14 +221,12 @@ func saveConfigToFileLocked() error {
 
 	log.Printf("配置数据大小: %d 字节\n", len(data))
 
-	// 写入文件
 	err = os.WriteFile(configPath, data, 0644)
 	if err != nil {
 		log.Printf("写入配置文件失败: %v\n", err)
 		return fmt.Errorf("写入配置文件失败: %v", err)
 	}
 
-	// 验证文件是否写入成功
 	fileInfo, err := os.Stat(configPath)
 	if err != nil {
 		log.Printf("无法获取文件信息: %v\n", err)
@@ -215,7 +239,6 @@ func saveConfigToFileLocked() error {
 	return nil
 }
 
-// copyFile 复制文件
 func copyFile(src, dst string) error {
 	input, err := os.ReadFile(src)
 	if err != nil {
@@ -225,7 +248,6 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, input, 0644)
 }
 
-// GetConfigPath 获取配置文件路径
 func GetConfigPath() string {
 	return configPath
 }

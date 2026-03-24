@@ -26,8 +26,10 @@ type ServerConfig struct {
 	SleepTime   float32           `mapstructure:"sleep-time" yaml:"sleep-time"`
 	Debug       bool              `mapstructure:"debug" yaml:"debug"`
 	AccessToken string            `mapstructure:"access-token" yaml:"access-token"`
+	Help        HelpConfig        `mapstructure:"help" yaml:"help"`
 	FileServer  FileServerConfig  `mapstructure:"file-server" yaml:"file-server"`
 	CommandAuth CommandAuthConfig `mapstructure:"command-auth" yaml:"command-auth"`
+	Blocked     BlockedConfig     `mapstructure:"blocked" yaml:"blocked"`
 }
 
 type DefaultConfig struct {
@@ -38,6 +40,13 @@ type DefaultConfig struct {
 type DefaultMessageTypeConfig struct {
 	Mode string  `mapstructure:"mode" yaml:"mode"`
 	Ids  []int64 `mapstructure:"ids" yaml:"ids"`
+}
+
+type HelpConfig struct {
+	Image           string `mapstructure:"image" yaml:"image"`
+	Font            string `mapstructure:"font" yaml:"font"`
+	Generate        bool   `mapstructure:"generate" yaml:"generate"`
+	ForwardNickname string `mapstructure:"forward-nickname" yaml:"forward-nickname"`
 }
 
 type FileServerConfig struct {
@@ -53,6 +62,11 @@ type CommandAuthConfig struct {
 	AllowOwner bool    `mapstructure:"allow-owner" yaml:"allow-owner"`
 	AllowAdmin bool    `mapstructure:"allow-admin" yaml:"allow-admin"`
 	SuperUsers []int64 `mapstructure:"super-users" yaml:"super-users"`
+}
+
+type BlockedConfig struct {
+	UserIDs  []int64 `mapstructure:"user-ids" yaml:"user-ids"`
+	GroupIDs []int64 `mapstructure:"group-ids" yaml:"group-ids"`
 }
 
 type BotAppsConfig struct {

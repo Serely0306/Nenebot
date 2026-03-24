@@ -45,6 +45,19 @@ func (f *Filter) Filter(onebotMessage *OneBotMessage) bool {
 		)
 	}
 
+	if isGloballyBlocked(onebotMessage) {
+		if CONFIG.Server.Debug {
+			log.Printf("%s：消息命中全局拉黑，已忽略：message_type=%s group=%d user=%d raw=%s\n",
+				f.Name,
+				onebotMessage.Partial.MessageType,
+				onebotMessage.Partial.GroupId,
+				onebotMessage.Partial.UserId,
+				onebotMessage.Partial.RawMessage,
+			)
+		}
+		return false
+	}
+
 	var usedFilter *MessageTypeFilter
 	var targetID int64
 
@@ -437,6 +450,25 @@ func dedupeStrings(values []string) []string {
 		result = append(result, value)
 	}
 	return result
+}
+
+func isGloballyBlocked(onebotMessage *OneBotMessage) bool {
+	if onebotMessage == nil {
+		return false
+	}
+
+	userID := getMessageUserID(onebotMessage)
+	groupID := onebotMessage.Partial.GroupId
+
+	if userID > 0 && slices.Contains(CONFIG.Server.Blocked.UserIDs, userID) {
+		return true
+	}
+
+	if onebotMessage.Partial.MessageType == GROUP && groupID > 0 && slices.Contains(CONFIG.Server.Blocked.GroupIDs, groupID) {
+		return true
+	}
+
+	return false
 }
 
 func (f *Filter) AddToBlacklist(messageType string, id int64) bool {

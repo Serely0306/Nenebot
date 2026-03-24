@@ -6,16 +6,23 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 type WsServer struct {
-	Conn      *websocket.Conn
-	WsClients []*WsClient
-	BotId     string
-	readChan  chan WsMsg
-	writeChan chan WsMsg
+	Conn         *websocket.Conn
+	WsClients    []*WsClient
+	BotId        string
+	readChan     chan WsMsg
+	writeChan    chan WsMsg
+	apiWaiters   map[string]chan map[string]interface{}
+	apiWaitersMu sync.Mutex
+	echoSeq      uint64
 }
 
 func (wss *WsServer) WsServerHandler() error {
@@ -25,9 +32,11 @@ func (wss *WsServer) WsServerHandler() error {
 
 	wss.readChan = readChan
 	wss.writeChan = writeChan
+	wss.apiWaiters = make(map[string]chan map[string]interface{})
 
 	go wss.readLoop(ctx, readChan)
 	go wss.writeLoop(ctx, writeChan)
+	go wss.refreshBotLoginInfo()
 	defer wss.close(cancel, readChan, writeChan)
 
 	for {
@@ -82,6 +91,10 @@ func (wss *WsServer) readLoop(ctx context.Context, readChan chan WsMsg) {
 		select {
 		case msg := <-readChan:
 			if msg.MsgType == websocket.TextMessage {
+				if wss.dispatchAPICallback(msg.MsgData) {
+					continue
+				}
+
 				wss.logDebugMessage(msg.MsgData)
 
 				onebotMessage := ParseOneBotMessage(msg.MsgData)
@@ -106,6 +119,35 @@ func (wss *WsServer) readLoop(ctx context.Context, readChan chan WsMsg) {
 			return
 		}
 	}
+}
+
+func (wss *WsServer) dispatchAPICallback(msgData []byte) bool {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(msgData, &payload); err != nil {
+		return false
+	}
+
+	echo, _ := payload["echo"].(string)
+	if echo == "" {
+		return false
+	}
+
+	wss.apiWaitersMu.Lock()
+	waiter, ok := wss.apiWaiters[echo]
+	if ok {
+		delete(wss.apiWaiters, echo)
+	}
+	wss.apiWaitersMu.Unlock()
+	if !ok {
+		return false
+	}
+
+	select {
+	case waiter <- payload:
+	default:
+	}
+	close(waiter)
+	return true
 }
 
 func (wss *WsServer) logDebugMessage(msgData []byte) {
@@ -167,8 +209,70 @@ func (wss *WsServer) SendCommandResponse(response map[string]interface{}) error 
 	return nil
 }
 
+func (wss *WsServer) nextEcho(prefix string) string {
+	seq := atomic.AddUint64(&wss.echoSeq, 1)
+	return fmt.Sprintf("%s-%d", prefix, seq)
+}
+
+func (wss *WsServer) CallAPI(action string, params map[string]interface{}, timeout time.Duration) (map[string]interface{}, error) {
+	if wss.Conn == nil {
+		return nil, errors.New("尚未连接到 OneBot 客户端")
+	}
+
+	echo := wss.nextEcho("onebotfilter")
+	payload := map[string]interface{}{
+		"action": action,
+		"params": params,
+		"echo":   echo,
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("序列化 API 请求失败: %w", err)
+	}
+
+	waiter := make(chan map[string]interface{}, 1)
+	wss.apiWaitersMu.Lock()
+	wss.apiWaiters[echo] = waiter
+	wss.apiWaitersMu.Unlock()
+
+	if err := wss.WriteMessage(websocket.TextMessage, data); err != nil {
+		wss.apiWaitersMu.Lock()
+		delete(wss.apiWaiters, echo)
+		wss.apiWaitersMu.Unlock()
+		return nil, err
+	}
+
+	select {
+	case resp := <-waiter:
+		return resp, nil
+	case <-time.After(timeout):
+		wss.apiWaitersMu.Lock()
+		delete(wss.apiWaiters, echo)
+		wss.apiWaitersMu.Unlock()
+		return nil, fmt.Errorf("调用 %s 超时", action)
+	}
+}
+
+func (wss *WsServer) refreshBotLoginInfo() {
+	resp, err := wss.CallAPI("get_login_info", map[string]interface{}{}, 5*time.Second)
+	if err != nil {
+		log.Printf("获取 bot 登录信息失败: %v\n", err)
+		return
+	}
+
+	data, _ := resp["data"].(map[string]interface{})
+	nickname, _ := data["nickname"].(string)
+	if strings.TrimSpace(nickname) == "" {
+		return
+	}
+
+	SetBotNickname(strings.TrimSpace(nickname))
+	log.Printf("已获取 bot 昵称: %s\n", nickname)
+}
+
 func (wss *WsServer) DisconnectAllClients() {
-	log.Println("正在断开所有下游 bot 客户端连接以重置状态...")
+	log.Println("正在断开所有下游 bot 客户端连接以重置状态..")
 
 	clients := make([]*WsClient, len(wss.WsClients))
 	copy(clients, wss.WsClients)
