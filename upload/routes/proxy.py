@@ -1,19 +1,133 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import time
+from pathlib import Path
+from threading import Lock
 
 import requests
 from flask import current_app, jsonify, request
 
-from core.runtime import REGION_API_HOSTS, REGION_NAMES, VALID_DATA_TYPES, VALID_REGIONS
+from core.runtime import BASE_DIR, REGION_API_HOSTS, REGION_NAMES, VALID_DATA_TYPES, VALID_REGIONS
 from services.crypto import DECRYPT_AVAILABLE, convert_to_serializable, decrypt_binary_data
 from services.data import normalize_upload_payload, process_and_save_data, save_json_payload
 from services.profile import load_profile_db, mask_game_id
 from services.suite import extract_suite_user_id
 
+IOS_UPLOAD_DIR = BASE_DIR / "tmp" / "ios_uploads"
+IOS_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+_IOS_UPLOAD_LOCK = Lock()
+
+
+def _sanitize_upload_id(upload_id: str) -> str | None:
+    normalized = re.sub(r"[^0-9A-Za-z_-]", "", upload_id or "")
+    if not normalized:
+        return None
+    return normalized[:80]
+
+
+def _build_ios_session_dir(upload_id: str) -> Path:
+    return IOS_UPLOAD_DIR / upload_id
+
+
+def _save_ios_chunk(session_dir: Path, chunk_index: int, chunk_data: bytes) -> None:
+    session_dir.mkdir(parents=True, exist_ok=True)
+    chunk_path = session_dir / f"{chunk_index:08d}.part"
+    chunk_path.write_bytes(chunk_data)
+
+
+def _has_all_ios_chunks(session_dir: Path, total_chunks: int) -> bool:
+    for index in range(total_chunks):
+        if not (session_dir / f"{index:08d}.part").exists():
+            return False
+    return True
+
+
+def _assemble_ios_chunks(session_dir: Path, total_chunks: int) -> bytes:
+    parts = []
+    for index in range(total_chunks):
+        parts.append((session_dir / f"{index:08d}.part").read_bytes())
+    return b"".join(parts)
+
+
+def _cleanup_ios_session(session_dir: Path) -> None:
+    shutil.rmtree(session_dir, ignore_errors=True)
+
+
+def _extract_uid_from_original_url(original_url: str, data_type: str) -> str | None:
+    if data_type == "suite":
+        match = re.search(r"/api/suite/user/(\d+)(?:$|\?)", original_url)
+    else:
+        match = re.search(r"/api/user/(\d+)/mysekai(?:$|\?)", original_url)
+    return match.group(1) if match else None
+
 
 def register_proxy_routes(app):
+    @app.route("/api/ios/upload", methods=["POST"])
+    def ios_upload():
+        region = request.args.get("region", "").lower()
+        data_type = request.args.get("data_type", "").lower()
+        if region not in VALID_REGIONS:
+            return jsonify({"error": f"Unsupported region: {region}"}), 400
+        if data_type not in VALID_DATA_TYPES:
+            return jsonify({"error": f"Unsupported data type: {data_type}"}), 400
+        if not DECRYPT_AVAILABLE:
+            return jsonify({"error": "Server decrypt dependencies are unavailable"}), 500
+
+        upload_id = _sanitize_upload_id(request.headers.get("X-Upload-Id", ""))
+        original_url = request.headers.get("X-Original-Url", "")
+        if not upload_id:
+            return jsonify({"error": "Missing X-Upload-Id"}), 400
+        if not original_url:
+            return jsonify({"error": "Missing X-Original-Url"}), 400
+
+        try:
+            chunk_index = int(request.headers.get("X-Chunk-Index", "-1"))
+            total_chunks = int(request.headers.get("X-Total-Chunks", "0"))
+        except ValueError:
+            return jsonify({"error": "Invalid chunk headers"}), 400
+
+        if chunk_index < 0 or total_chunks <= 0 or chunk_index >= total_chunks:
+            return jsonify({"error": "Chunk index out of range"}), 400
+
+        chunk_data = request.get_data(cache=False)
+        if chunk_data is None:
+            return jsonify({"error": "Missing request body"}), 400
+
+        uid = _extract_uid_from_original_url(original_url, data_type)
+        if not uid:
+            return jsonify({"error": "Unable to extract user id from original url"}), 400
+
+        session_dir = _build_ios_session_dir(upload_id)
+        with _IOS_UPLOAD_LOCK:
+            _save_ios_chunk(session_dir, chunk_index, chunk_data)
+            if not _has_all_ios_chunks(session_dir, total_chunks):
+                return jsonify(
+                    {
+                        "success": True,
+                        "complete": False,
+                        "upload_id": upload_id,
+                        "chunk_index": chunk_index,
+                        "total_chunks": total_chunks,
+                    }
+                )
+            data_bytes = _assemble_ios_chunks(session_dir, total_chunks)
+            _cleanup_ios_session(session_dir)
+
+        process_and_save_data(region, uid, data_bytes, data_type)
+        return jsonify(
+            {
+                "success": True,
+                "complete": True,
+                "upload_id": upload_id,
+                "user_id": uid,
+                "region": region,
+                "data_type": data_type,
+            }
+        )
+
     @app.route("/api/<region>/user/<uid>/upload/<data_type>", methods=["GET", "POST", "PUT"])
     def proxy_upload(region, uid, data_type="mysekai"):
         region = region.lower()
