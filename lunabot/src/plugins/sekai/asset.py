@@ -69,6 +69,9 @@ class RegionMasterDbManager:
         self.latest_source = None
         self.version_update_interval = version_update_interval
         self.version_update_time = None
+        self.download_retry_cooldown_until = None
+        self.download_retry_cooldown_version = None
+        self.download_retry_cooldown_data_version = None
 
     async def update(self):
         """
@@ -109,6 +112,34 @@ class RegionMasterDbManager:
         if force_update or not self.latest_source or datetime.now() - self.version_update_time > self.version_update_interval:
             await self.update()
         return self.sources
+
+    def in_download_retry_cooldown(self, source: RegionMasterDbSource = None) -> bool:
+        if self.download_retry_cooldown_until is None:
+            return False
+        if datetime.now() >= self.download_retry_cooldown_until:
+            self.clear_download_retry_cooldown()
+            return False
+        if source is None:
+            return True
+        return (
+            self.download_retry_cooldown_version == source.version
+            and self.download_retry_cooldown_data_version == source.data_version
+        )
+
+    def set_download_retry_cooldown(self, source: RegionMasterDbSource):
+        cooldown_seconds = asset_config.get('masterdata_download_retry_cooldown_seconds', 180)
+        self.download_retry_cooldown_until = datetime.now() + timedelta(seconds=cooldown_seconds)
+        self.download_retry_cooldown_version = source.version
+        self.download_retry_cooldown_data_version = source.data_version
+        logger.warning(
+            f"MasterData [{self.region}.{source.name}] 下载超时，"
+            f"在接下来 {cooldown_seconds} 秒内跳过重复远程更新尝试"
+        )
+
+    def clear_download_retry_cooldown(self):
+        self.download_retry_cooldown_until = None
+        self.download_retry_cooldown_version = None
+        self.download_retry_cooldown_data_version = None
 
     @classmethod
     def on_update(cls):
@@ -254,9 +285,11 @@ class MasterDataManager:
             await asyncio.wait_for(_download(), timeout)
         except asyncio.TimeoutError:
             logger.warning(f"下载 MasterData [{region}.{self.name}] 超时")
+            RegionMasterDbManager.get(region).set_download_retry_cooldown(source)
             return
         self.version[region] = source.version
         self.data_version[region] = source.data_version
+        RegionMasterDbManager.get(region).clear_download_retry_cooldown()
 
         # 缓存到本地
         async with MASTERDATA_DB_LOCK:
@@ -318,7 +351,13 @@ class MasterDataManager:
             if self.data.get(region) is None:
                 need_update = True
             if need_update:
-                await self._download_from_db(region, source)
+                if db_mgr.in_download_retry_cooldown(source):
+                    logger.warning(
+                        f"MasterData [{region}.{self.name}] 远程更新冷却中，"
+                        f"继续使用本地缓存数据"
+                    )
+                else:
+                    await self._download_from_db(region, source)
             # 检查是否存在，如果仍然不存在则报错
             if self.data.get(region) is None:
                 raise Exception(f"获取 MasterData [{region}.{self.name}] 的数据失败")
