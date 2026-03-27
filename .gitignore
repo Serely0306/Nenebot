@@ -48,6 +48,8 @@ ZeroBot-Plugin-master/go.mod
 ZeroBot-Plugin-master/config1.json
 haruki/
 **/.gitignore
+sync.ps1
+sync.cmd
 haruki-tool/Haruki-Sekai-Asset-Updater
 haruki-tool/Haruki-Toolbox-Backend
 haruki-tool/HarukiBot-Docs
