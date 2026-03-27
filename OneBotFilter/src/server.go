@@ -199,7 +199,7 @@ func (wss *WsServer) SendCommandResponse(response map[string]interface{}) error 
 		return fmt.Errorf("序列化命令响应失败: %v", err)
 	}
 
-	if err := wss.Conn.WriteMessage(websocket.TextMessage, responseData); err != nil {
+	if err := wss.WriteMessage(websocket.TextMessage, responseData); err != nil {
 		return fmt.Errorf("发送命令响应失败: %v", err)
 	}
 
