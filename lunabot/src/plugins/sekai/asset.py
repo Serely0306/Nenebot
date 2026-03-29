@@ -851,6 +851,9 @@ def sekai_best_url_map(url: str) -> str:
 _ASSETS_PREFIXES = (
     "jp-assets/", "cn-assets/", "en-assets/", "tw-assets/", "kr-assets/",
 )
+_REGION_PREFIXES = (
+    "jp/", "cn/", "en/", "tw/", "kr/",
+)
 
 def haruki_url_map(url: str) -> str:
     sp = urlsplit(url)
@@ -897,6 +900,45 @@ def pjsekai_moe_url_map(url: str) -> str:
     url = url.replace("_rip", "")
     return url
 
+def moesekai_url_map(url: str) -> str:
+    sp = urlsplit(url)
+    path = sp.path.lstrip("/")
+
+    region_prefix = ""
+    for pref in _REGION_PREFIXES:
+        if path.startswith(pref):
+            region_prefix = pref
+            path = path[len(pref):]
+            break
+    if not region_prefix:
+        for pref in _ASSETS_PREFIXES:
+            if path.startswith(pref):
+                region_prefix = pref.replace("-assets/", "/")
+                path = path[len(pref):]
+                break
+
+    if path.startswith("assets/"):
+        path = path[len("assets/"):]
+
+    part2 = path.replace("_rip", "")
+    if "music_score" in part2 and not part2.endswith(".txt"):
+        part2 += ".txt"
+    part2 = part2.replace(".asset", ".json")
+
+    if re.match(r"^(startapp|ondemand)/", part2):
+        mapped_path = region_prefix + part2
+    else:
+        if any(part2.startswith(prefix) for prefix in ONDEMAND_PREFIXES):
+            category = "ondemand"
+        elif any(part2.startswith(prefix) for prefix in STARTAPP_PREFIXES):
+            category = "startapp"
+        else:
+            raise Exception(f"在startapp和ondemand都找不到: {url}")
+        mapped_path = f"{region_prefix}{category}/{part2}"
+
+    new_path = "/" + mapped_path
+    return urlunsplit((sp.scheme, sp.netloc, new_path, sp.query, sp.fragment))
+
 def unipjsk_url_map(url: str) -> str:
     idx = url.find("assets.unipjsk.com/")
     assert idx != -1, f"解包资源url格式错误: {url}"
@@ -922,6 +964,7 @@ def unipjsk_url_map(url: str) -> str:
 DEFAULT_URL_MAP_METHODS = {
     "sekai.best": sekai_best_url_map,
     "haruki": haruki_url_map,
+    "moesekai": moesekai_url_map,
     "pjsekai.moe": pjsekai_moe_url_map,
     "unipjsk": unipjsk_url_map,
 }
