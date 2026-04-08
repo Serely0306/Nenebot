@@ -101,6 +101,7 @@ MUSIC_COMPARE_KEYWORDS = ('歌曲比较', '歌曲排行', '歌曲排名', '歌�
 MUSIC_COMPARE_DEFAULT_MUSIC_NUM = 8
 MUSIC_COMPARE_CANDIDATE_MUSIC_NUM = 40
 MUSCI_COMPARE_MAX_MUSIC_NUM = 5
+SIMULATE_WL_TURNS = (1, 2, 3)
 
 MAX_KEYWORDS = ('最高', '最大', '最优', '最强', '最佳')
 MIN_KEYWORDS = ('最低', '最小', '最差', '最弱', '最烂')
@@ -317,8 +318,8 @@ async def extract_target_event_or_simulate_event(
     args: str,
     options: DeckRecommendOptions,
 ) -> str:
-    # 匹配模拟WL活动（角色名+wl1 / wl2）
-    for turn in (1, 2):
+    # 匹配模拟WL活动（角色名+wl1 / wl2 / wl3）
+    for turn in SIMULATE_WL_TURNS:
         if f"wl{turn}" in args:
             for nickname, cid in get_character_nickname_data().nickname_ids:
                 if nickname in args:
@@ -328,6 +329,91 @@ async def extract_target_event_or_simulate_event(
                     options.world_bloom_event_turn = turn
                     options.world_bloom_character_id = cid
                     return args
+
+    '''
+    匹配自定义混活模拟：%角色1 角色2 ... @属性
+    例如：/组卡 %miku rin len kaito meiko @cool
+    该功能需要配合算法库sekai-deck-recommend-cpp的新版代码
+    参见https://github.com/moe-sekai/sekai-deck-recommend-cpp的6b547ae
+    请自行编译
+    '''
+    percent_index = args.find('%')
+    at_index = args.find('@')
+    if percent_index != -1 or at_index != -1:
+        if percent_index == -1 or at_index == -1 or at_index <= percent_index:
+            raise ReplyException("自定义混活格式错误，请使用“%角色列表 @属性”")
+
+        chara_text = args[percent_index + 1:at_index].strip()
+        attr_text = args[at_index + 1:].strip()
+        if not chara_text:
+            raise ReplyException("请在 % 后指定至少一个角色")
+
+        attr, rest_after_attr = extract_card_attr(attr_text, default=None)
+        if not attr:
+            raise ReplyException("请在 @ 后指定一个有效属性")
+
+        raw_tokens = chara_text
+        for sep in (",", "，", "、", "/", "|", "\t", "\n"):
+            raw_tokens = raw_tokens.replace(sep, " ")
+        tokens = [t.strip() for t in raw_tokens.split(" ") if t.strip()]
+        if not tokens:
+            raise ReplyException("未识别到任何有效角色，请检查 % 后的角色名")
+
+        support_prefix_map = {}
+        allowed_support_units = {"light_sound", "idol", "street", "theme_park", "school_refusal"}
+        for names in UNIT_NAMES:
+            unit = names[0]
+            if unit not in allowed_support_units:
+                continue
+            for name in names:
+                support_prefix_map[name] = unit
+        support_prefixes = sorted(support_prefix_map.items(), key=lambda x: len(x[0]), reverse=True)
+
+        custom_cids = []
+        custom_support_units = {}
+        unknown_tokens = []
+        for token in tokens:
+            cid = get_cid_by_nickname(token)
+            support_unit = None
+
+            if cid is None:
+                for prefix, unit in support_prefixes:
+                    if token.startswith(prefix) and len(token) > len(prefix):
+                        nickname_part = token[len(prefix):]
+                        candidate_cid = get_cid_by_nickname(nickname_part)
+                        if candidate_cid and get_unit_by_chara_id(candidate_cid) == "piapro":
+                            cid = candidate_cid
+                            support_unit = unit
+                            break
+
+            if cid is None:
+                unknown_tokens.append(token)
+                continue
+
+            if cid not in custom_cids:
+                custom_cids.append(cid)
+                if len(custom_cids) > 6:
+                    raise ReplyException("自定义混活最多指定6名角色")
+
+            if support_unit is not None:
+                old_unit = custom_support_units.get(cid)
+                if old_unit is not None and old_unit != support_unit:
+                    raise ReplyException(f"同一角色重复指定了不同附属组合：{token}")
+                custom_support_units[cid] = support_unit
+
+        if unknown_tokens:
+            raise ReplyException(f"无法识别的角色片段：{' '.join(unknown_tokens)}")
+        if not custom_cids:
+            raise ReplyException("未识别到任何有效角色，请检查 % 后的角色名")
+
+        options.custom_bonus_character_ids = custom_cids
+        options.custom_bonus_attr = attr
+        if hasattr(options, "custom_bonus_character_support_units"):
+            options.custom_bonus_character_support_units = custom_support_units if custom_support_units else None
+
+        prefix = args[:percent_index].strip()
+        args = f"{prefix} {rest_after_attr}".strip()
+        return args
 
     # 25需要优先匹配团队，对于活动id内包含25的情况，必须让团队的25两边不能有数字或者"event"、"活动"
     # 这样只有想以单独数字25指定25期活动时可能产生歧义，为该情况额外添加用户提示
@@ -1083,6 +1169,9 @@ def log_options(ctx: SekaiHandlerContext, user_id: int, options: DeckRecommendOp
     log += f"mdiff={options.music_diff}, "
     log += f"eid={options.event_id}, "
     log += f"wl_cid={options.world_bloom_character_id}, "
+    log += f"custom_bonus_attr={options.custom_bonus_attr}, "
+    log += f"custom_bonus_cids={list(options.custom_bonus_character_ids or [])}, "
+    log += f"custom_bonus_support_units={options.custom_bonus_character_support_units}, "
     log += f"challenge_cid={options.challenge_live_character_id}, "
     log += f"limit={options.limit}, "
     log += f"member={options.member}, "
@@ -1154,6 +1243,9 @@ async def do_deck_recommend_batch(
             algs = [options.algorithm]
         for alg in algs:
             opt = options.to_dict()
+            support_units = opt.get('custom_bonus_character_support_units')
+            if isinstance(support_units, dict):
+                opt['custom_bonus_character_support_units'] = {str(k): v for k, v in support_units.items()}
             opt['algorithm'] = alg
             recommend_data['batch_options'].append(opt)
             original_indices.append(i)
@@ -1217,7 +1309,7 @@ async def do_deck_recommend_batch(
             elif options.target == "skill":
                 return deck.multi_live_score_up
             elif options.target == "bonus":
-                return (-deck.event_bonus_rate, deck.score)
+                return (deck.event_bonus_rate, deck.score)
         limit = options.limit if options.target != "bonus" else options.limit * len(options.target_bonus_list)
         decks = sorted(decks, key=key_func, reverse=True)[:limit]
         src_algs = [deck_src_alg[get_deck_hash(deck)] for deck in decks]
@@ -1403,6 +1495,8 @@ async def compose_deck_recommend_image(
 
     is_wl = options.world_bloom_character_id or options.event_id == 180
 
+    has_custom_sim_event = bool(options.custom_bonus_character_ids and options.custom_bonus_attr)
+
     if options.live_type == "mysekai":
         recommend_type = "mysekai"
     elif options.target == "bonus":
@@ -1425,11 +1519,12 @@ async def compose_deck_recommend_image(
     else:
         if options.event_unit:
             recommend_type = "unit_attr"
+        elif has_custom_sim_event:
+            recommend_type = "custom_event"
         else:
             recommend_type = "no_event"
 
     # ---------------------------- 处理额外参数 ---------------------------- #
-            
     # 是否是顶配租卡
     use_max_profile = additional.get('max_profile', False)
     use_sub_max_profile = additional.get('sub_max_profile', False)
@@ -1573,7 +1668,7 @@ async def compose_deck_recommend_image(
                     value += item[key][i] * (1.8 if is_multi else 1.0)
                 if is_multi:
                     value += item['fever_score'] * 0.5
-                if recommend_type in ['event', 'wl', 'wl_fake', 'unit_attr'] and options.target == 'score':
+                if recommend_type in ['event', 'wl', 'wl_fake', 'unit_attr', 'custom_event'] and options.target == 'score':
                     value *= item['event_rate'] / 100.0
                 music_values.append((value, music_id, diff))
             music_values = sorted(music_values, key=lambda x: x[0], reverse=True)[:MUSIC_COMPARE_CANDIDATE_MUSIC_NUM]
@@ -1780,6 +1875,33 @@ async def compose_deck_recommend_image(
         unit_logo = get_unit_logo(options.event_unit)
         attr_icon = get_attr_icon(options.event_attr)
 
+    # 获取自定义混活模拟的角色/属性图标
+    custom_bonus_chara_icon_infos = []
+    custom_bonus_attr_icon = None
+    if recommend_type == "custom_event":
+        custom_bonus_attr_icon = get_attr_icon(options.custom_bonus_attr) if options.custom_bonus_attr else None
+        support_units = options.custom_bonus_character_support_units or {}
+        normalized_support_units = {}
+        if isinstance(support_units, dict):
+            for k, v in support_units.items():
+                try:
+                    normalized_support_units[int(k)] = v
+                except Exception:
+                    continue
+        sorted_cids = sorted(options.custom_bonus_character_ids or [])
+        for cid in sorted_cids:
+            icon = get_chara_icon_by_chara_id(cid)
+            if icon is None:
+                continue
+            support_unit_icon = None
+            support_unit = normalized_support_units.get(cid)
+            if support_unit and 21 <= cid <= 26:
+                try:
+                    support_unit_icon = ctx.static_imgs.get(f"icon_{support_unit}.png")
+                except Exception:
+                    support_unit_icon = None
+            custom_bonus_chara_icon_infos.append((icon, support_unit_icon))
+
     # 获取卡组卡牌缩略图
     draw_eventbonus = recommend_type in ["bonus", "wl_bonus"]
     async def _get_thumb(card, pcard):
@@ -1862,6 +1984,8 @@ async def compose_deck_recommend_image(
                             title += f"第{options.world_bloom_event_turn}轮WL模拟组卡"
                         elif recommend_type == "unit_attr":
                             title += f"团队+颜色模拟活动组卡"
+                        elif recommend_type == "custom_event":
+                            title += f"自定义混活模拟活动组卡"
                         elif recommend_type == "no_event":
                             title += f"无活动组卡"
                     
@@ -1894,6 +2018,16 @@ async def compose_deck_recommend_image(
                         if unit_logo and attr_icon:
                             ImageBox(unit_logo, size=(None, 60))
                             ImageBox(attr_icon, size=(None, 50))
+                        if recommend_type == "custom_event" and (custom_bonus_chara_icon_infos or custom_bonus_attr_icon):
+                            with HSplit().set_content_align('l').set_item_align('c').set_sep(5):
+                                for icon, support_icon in custom_bonus_chara_icon_infos:
+                                    with Frame().set_size((44, 44)).set_content_align('rb'):
+                                        ImageBox(icon, size=(None, 44))
+                                        if support_icon is not None:
+                                            ImageBox(support_icon, size=(20, 20)).set_offset((5, 5))
+                                if custom_bonus_attr_icon:
+                                    TextBox("+", TextStyle(font=DEFAULT_BOLD_FONT, size=24, color=(90, 90, 90)))
+                                    ImageBox(custom_bonus_attr_icon, size=(None, 40))
                         
                         if use_max_profile:
                             TextBox(f"({get_region_name(ctx.region)}顶配)", TextStyle(font=DEFAULT_BOLD_FONT, size=30, color=(50, 50, 50)))

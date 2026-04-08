@@ -253,6 +253,7 @@ def deterministic_hash(obj: Any, raise_error: bool = False) -> str:
 # =========================== 基础定义 =========================== #
 
 PAINTER_CACHE_DIR = "data/utils/painter_cache/"
+EMOJI_CACHE_DIR = "data/utils/emoji_cache/"
 
 PAINTER_PROCESS_NUM = global_config.get('painter.process_num')
 
@@ -277,6 +278,50 @@ DEFAULT_FONT = "SourceHanSansCN-Regular"
 DEFAULT_BOLD_FONT = "SourceHanSansCN-Bold"
 DEFAULT_HEAVY_FONT = "SourceHanSansCN-Heavy"
 DEFAULT_EMOJI_FONT = "EmojiOneColor-SVGinOT"
+
+
+def _normalize_emoji_text(text: str) -> str:
+    return text.replace("\ufe0f", "")
+
+
+def _emoji_cache_path(text: str) -> str:
+    normalized = _normalize_emoji_text(text)
+    codepoints = "-".join(f"{ord(ch):x}" for ch in normalized)
+    return os.path.join(EMOJI_CACHE_DIR, f"{codepoints}.png")
+
+
+class CachedGoogleEmojiSource(GoogleEmojiSource):
+    REQUEST_KWARGS = {
+        'headers': {'User-Agent': 'Mozilla/5.0'},
+        'timeout': (2, 4),
+    }
+
+    def _load_file(self, path: str) -> Optional[io.BytesIO]:
+        if not os.path.isfile(path):
+            return None
+        with open(path, 'rb') as f:
+            return io.BytesIO(f.read())
+
+    def get_emoji(self, emoji_text: str, /) -> Optional[io.BytesIO]:
+        cache_path = _emoji_cache_path(emoji_text)
+
+        if stream := self._load_file(cache_path):
+            return stream
+
+        try:
+            stream = super().get_emoji(emoji_text)
+            if stream is None:
+                return None
+            data = stream.getvalue()
+            if not data:
+                return None
+            os.makedirs(EMOJI_CACHE_DIR, exist_ok=True)
+            with open(cache_path, 'wb') as f:
+                f.write(data)
+            return io.BytesIO(data)
+        except Exception as e:
+            debug_print(f"load emoji failed: {emoji_text!r} {e}")
+            return None
 
 
 ALIGN_MAP = {
@@ -669,7 +714,7 @@ class Painter:
             pos = (pos[0] - text_offset[0] + self.offset[0], pos[1] - text_offset[1] + self.offset[1])
             draw.text(pos, text, font=font, fill=fill, align=align, anchor='ls')
         else:
-            with Pilmoji(self.img, source=GoogleEmojiSource) as pilmoji:
+            with Pilmoji(self.img, source=CachedGoogleEmojiSource) as pilmoji:
                 text_offset = (0, -std_size[1])
                 offset = global_config.get('painter.emoji.offset')
                 scale = global_config.get('painter.emoji.scale')
