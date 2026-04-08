@@ -941,7 +941,11 @@ async def get_music_cover_thumb(ctx: SekaiHandlerContext, mid: int) -> Image.Ima
     music = await ctx.md.musics.find_by_id(mid)
     assert_and_reply(music, f"歌曲ID={mid}不存在")
     asset_name = music['assetbundleName']
-    return await ctx.rip.img(f"music/jacket/{asset_name}_rip/{asset_name}.png", use_img_cache=True)
+    return await ctx.rip.img(
+        f"music/jacket/{asset_name}_rip/{asset_name}.png",
+        use_img_cache=True,
+        default=None,
+    )
 
 # 获取曲目翻译名 lang in ['cn', 'en']
 async def get_music_trans_title(mid: int, lang: str, default: str=None) -> str:
@@ -1041,7 +1045,7 @@ async def compose_music_detail_image(ctx: SekaiHandlerContext, mid: int, title: 
     music = await ctx.md.musics.find_by_id(mid)
     assert_and_reply(music, f"歌曲{mid}不存在")
     asset_name = music['assetbundleName']
-    cover_img = await ctx.rip.img(f"music/jacket/{asset_name}_rip/{asset_name}.png")
+    cover_img = await ctx.rip.img(f"music/jacket/{asset_name}_rip/{asset_name}.png", default=None)
     name    = music["title"]
     cn_name = await get_music_trans_title(mid, 'cn', None)
     composer        = music["composer"]
@@ -1172,7 +1176,13 @@ async def compose_music_detail_image(ctx: SekaiHandlerContext, mid: int, title: 
                 with HSplit().set_content_align('c').set_item_align('c').set_sep(16):
                     # 封面
                     with Frame().set_padding(32):
-                        ImageBox(cover_img, size=(None, 300), shadow=True)
+                        if cover_img is not None:
+                            ImageBox(cover_img, size=(None, 300), shadow=True)
+                        else:
+                            TextBox(
+                                "暂无曲绘",
+                                TextStyle(font=DEFAULT_BOLD_FONT, size=28, color=(80, 80, 80)),
+                            ).set_size((300, 300)).set_content_align('c').set_bg(roundrect_bg())
 
                     # 信息
                     style1 = TextStyle(font=DEFAULT_HEAVY_FONT, size=30, color=(50, 50, 50))
@@ -1400,7 +1410,13 @@ async def compose_music_list_image(
                             for music in filtered_musics:
                                 with VSplit().set_sep(2):
                                     with Frame():
-                                        ImageBox(music['cover_img'], size=(64, 64), image_size_mode='fill')
+                                        if music['cover_img'] is not None:
+                                            ImageBox(music['cover_img'], size=(64, 64), image_size_mode='fill')
+                                        else:
+                                            TextBox(
+                                                "暂无曲绘",
+                                                TextStyle(font=DEFAULT_BOLD_FONT, size=12, color=(80, 80, 80)),
+                                            ).set_size((64, 64)).set_content_align('c').set_bg(roundrect_bg())
                                         if music['is_leak']:
                                             TextBox("LEAK", TextStyle(font=DEFAULT_BOLD_FONT, size=12, color=RED)) \
                                                 .set_bg(roundrect_bg(radius=4)).set_offset((64, 64)).set_offset_anchor('rb')
@@ -1622,7 +1638,13 @@ async def compose_music_brief_list_image(
                 style3 = TextStyle(font=DEFAULT_BOLD_FONT, size=16, color=WHITE)
 
                 with HSplit().set_content_align('c').set_item_align('c').set_sep(8).set_padding(16):
-                    ImageBox(cover, size=(80, 80), shadow=True)
+                    if cover is not None:
+                        ImageBox(cover, size=(80, 80), shadow=True)
+                    else:
+                        TextBox(
+                            "暂无曲绘",
+                            TextStyle(font=DEFAULT_BOLD_FONT, size=14, color=(80, 80, 80)),
+                        ).set_size((80, 80)).set_content_align('c').set_bg(roundrect_bg())
                     with VSplit().set_content_align('lt').set_item_align('lt').set_sep(8):
                         TextBox(f"【{ctx.region.upper()}-{mid}】{music_name}", style1).set_w(250)
                         time_text = f"  {publish_time.strftime('%Y-%m-%d %H:%M:%S')}"
@@ -1948,7 +1970,13 @@ async def compose_best30_image(ctx: SekaiHandlerContext, qid: int) -> Image.Imag
                     diff_color = DIFF_COLORS[cr['diff']]
                     with HSplit().set_content_align('l').set_item_align('l').set_sep(16).set_padding((24, 20)):
                         with Frame().set_content_align('lt'):
-                            ImageBox(cr['cover'], size=(80, 80), shadow=True)
+                            if cr['cover'] is not None:
+                                ImageBox(cr['cover'], size=(80, 80), shadow=True)
+                            else:
+                                TextBox(
+                                    "暂无曲绘",
+                                    TextStyle(font=DEFAULT_BOLD_FONT, size=14, color=(80, 80, 80)),
+                                ).set_size((80, 80)).set_content_align('c').set_bg(roundrect_bg())
                             TextBox(str(cr['level']), TextStyle(DEFAULT_BOLD_FONT, 18, WHITE), overflow='clip') \
                                 .set_bg(roundrect_bg(fill=diff_color, radius=16)).set_offset((-16, -16)).set_content_align('c').set_size((32, 32))
 
@@ -2322,11 +2350,12 @@ async def _(ctx: SekaiHandlerContext):
     ret = await search_music(ctx, query, MusicSearchOptions())
     assert_and_reply(ret.music, f"未找到歌曲\"{query}\"")
 
-    cover_cq = await get_image_cq(
-        await get_music_cover_thumb(ctx, ret.music['id']), 
-        low_quality=True
-    )
-    msg = f"{cover_cq}【{ret.music['id']}】{ret.music['title']}\n{ret.candidate_msg}".strip()
+    cover = await get_music_cover_thumb(ctx, ret.music['id'])
+    msg = f"【{ret.music['id']}】{ret.music['title']}\n{ret.candidate_msg}".strip()
+    if cover is not None:
+        msg = (await get_image_cq(cover, low_quality=True) + msg).strip()
+    else:
+        msg = f"暂无曲绘\n{msg}".strip()
     
     bpm = await get_chart_bpm(ctx, ret.music['id'])
     msg += "\n---\nBPM: "
@@ -2355,8 +2384,11 @@ async def _(ctx: SekaiHandlerContext):
     asset_name = ret.music['assetbundleName']
     title = ret.music['title']
     mid = ret.music['id']
-    cover = await ctx.rip.img(f"music/jacket/{asset_name}_rip/{asset_name}.png")
-    msg = await get_image_cq(cover) + (f"【{mid}】{title}\n" + ret.candidate_msg).strip()
+    cover = await ctx.rip.img(f"music/jacket/{asset_name}_rip/{asset_name}.png", default=None)
+    if cover is None:
+        msg = (f"【{mid}】{title}\n暂无曲绘\n" + ret.candidate_msg).strip()
+    else:
+        msg = await get_image_cq(cover) + (f"【{mid}】{title}\n" + ret.candidate_msg).strip()
     return await ctx.asend_reply_msg(msg)
 
 
