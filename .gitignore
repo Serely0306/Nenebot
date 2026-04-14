@@ -68,4 +68,6 @@ upload/debug
 upload/tools
 upload/config.yaml
 OneBotFilter/src/fileconv_test.go
-OneBotFilter/help_preview_check.png
+OneBotFilter/help.png
+harukineo/cn_collect_configs.yaml
+harukineo/configs.yaml
