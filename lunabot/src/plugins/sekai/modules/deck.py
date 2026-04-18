@@ -2429,6 +2429,49 @@ async def deckrec_update_data():
             current_musicmetas_update_ts = await musicmetas_json.get_update_time()
             logger.debug(f"组卡 {region} 当前 masterdata 版本: {current_masterdata_version} musicmetas 更新时间: {current_musicmetas_update_ts}")
 
+            async def get_masterdata_paths() -> list[str]:
+                mds = [
+                    ctx.md.area_item_levels.get_path(),
+                    ctx.md.area_items.get_path(),
+                    ctx.md.areas.get_path(),
+                    ctx.md.card_episodes.get_path(),
+                    ctx.md.cards.get_path(),
+                    ctx.md.card_rarities.get_path(),
+                    ctx.md.character_ranks.get_path(),
+                    ctx.md.event_cards.get_path(),
+                    ctx.md.event_deck_bonuses.get_path(),
+                    ctx.md.event_exchange_summaries.get_path(),
+                    ctx.md.events.get_path(),
+                    ctx.md.event_items.get_path(),
+                    ctx.md.event_rarity_bonus_rates.get_path(),
+                    ctx.md.game_characters.get_path(),
+                    ctx.md.game_character_units.get_path(),
+                    ctx.md.honors.get_path(),
+                    ctx.md.master_lessons.get_path(),
+                    ctx.md.music_diffs.get_path(),
+                    ctx.md.musics.get_path(),
+                    ctx.md.music_vocals.get_path(),
+                    ctx.md.shop_items.get_path(),
+                    ctx.md.skills.get_path(),
+                    ctx.md.world_bloom_different_attribute_bonuses.get_path(),
+                    ctx.md.world_blooms.get_path(),
+                    ctx.md.world_bloom_support_deck_bonuses.get_path(),
+                ]
+                if ctx.region in MYSEKAI_REGIONS:
+                    mds += [
+                        ctx.md.world_bloom_support_deck_unit_event_limited_bonuses.get_path(),
+                        ctx.md.card_mysekai_canvas_bonuses.get_path(),
+                        ctx.md.mysekai_fixture_game_character_groups.get_path(),
+                        ctx.md.mysekai_fixture_game_character_group_performance_bonuses.get_path(),
+                        ctx.md.mysekai_gates.get_path(),
+                        ctx.md.mysekai_gate_levels.get_path(),
+                    ]
+                return await asyncio.gather(*mds)
+
+            masterdata_paths = await get_masterdata_paths()
+            masterdata_mtime_ns = max((os.stat(path).st_mtime_ns for path in masterdata_paths), default=0)
+            current_masterdata_version = f"{current_masterdata_version}@{masterdata_mtime_ns}"
+
             async def construct_payload(with_masterdata: bool, with_musicmetas: bool) -> bytes:
                 payloads = []
 
@@ -2441,43 +2484,7 @@ async def deckrec_update_data():
 
                 if with_masterdata:
                     logger.info(f"为自动组卡加载 {ctx.region} masterdata")
-                    mds = [
-                        ctx.md.area_item_levels.get_path(),
-                        ctx.md.area_items.get_path(),
-                        ctx.md.areas.get_path(),
-                        ctx.md.card_episodes.get_path(),
-                        ctx.md.cards.get_path(),
-                        ctx.md.card_rarities.get_path(),
-                        ctx.md.character_ranks.get_path(),
-                        ctx.md.event_cards.get_path(),
-                        ctx.md.event_deck_bonuses.get_path(),
-                        ctx.md.event_exchange_summaries.get_path(),
-                        ctx.md.events.get_path(),
-                        ctx.md.event_items.get_path(),
-                        ctx.md.event_rarity_bonus_rates.get_path(),
-                        ctx.md.game_characters.get_path(),
-                        ctx.md.game_character_units.get_path(),
-                        ctx.md.honors.get_path(),
-                        ctx.md.master_lessons.get_path(),
-                        ctx.md.music_diffs.get_path(),
-                        ctx.md.musics.get_path(),
-                        ctx.md.music_vocals.get_path(),
-                        ctx.md.shop_items.get_path(),
-                        ctx.md.skills.get_path(),
-                        ctx.md.world_bloom_different_attribute_bonuses.get_path(),
-                        ctx.md.world_blooms.get_path(),
-                        ctx.md.world_bloom_support_deck_bonuses.get_path(),
-                    ]
-                    if ctx.region in MYSEKAI_REGIONS:
-                        mds += [
-                            ctx.md.world_bloom_support_deck_unit_event_limited_bonuses.get_path(),
-                            ctx.md.card_mysekai_canvas_bonuses.get_path(),
-                            ctx.md.mysekai_fixture_game_character_groups.get_path(),
-                            ctx.md.mysekai_fixture_game_character_group_performance_bonuses.get_path(),
-                            ctx.md.mysekai_gates.get_path(),
-                            ctx.md.mysekai_gate_levels.get_path(),
-                        ]
-                    for path in await asyncio.gather(*mds):
+                    for path in masterdata_paths:
                         with open(path, 'rb') as f:
                             add_payload_segment(payloads, os.path.basename(path).encode('utf-8'))
                             add_payload_segment(payloads, f.read())
