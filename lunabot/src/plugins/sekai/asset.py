@@ -2,6 +2,7 @@ from ..utils import *
 from .common import *
 import threading
 from urllib.parse import urlsplit, urlunsplit
+import inspect
 import re
 
 asset_config = Config('sekai.asset')
@@ -180,6 +181,7 @@ class MasterDataManager:
         self.update_hooks = []
         self.map_fn = {}
         self.download_fn = {}
+        self.dependencies = {}
         self._set_index_keys(DEFAULT_INDEX_KEYS)
         self.indexed_data: Dict[str, Dict[str, Dict[str, Any]]] = {}    # indexed_data[region]['id'][id] = [item1, item2, ...]
         self._set_sort_keys(DEFAULT_SORT_KEYS)
@@ -259,7 +261,10 @@ class MasterDataManager:
         logger.info(f"MasterData [{region}.{self.name}] 从本地加载成功")
         map_fn = self.map_fn.get('all', self.map_fn.get(region))
         if map_fn:
-            self.data[region] = await run_in_pool(map_fn, self.data[region])
+            map_args = [self.data[region]]
+            if len(inspect.signature(map_fn).parameters) >= 2:
+                map_args.append(region)
+            self.data[region] = await run_in_pool(map_fn, *map_args)
             logger.info(f"MasterData [{region}.{self.name}] 映射函数执行完成")
         await run_in_pool(self._build_indexed_data, region)
         await run_in_pool(self._build_sorted_data, region)
@@ -310,7 +315,10 @@ class MasterDataManager:
         # 执行映射函数
         map_fn = self.map_fn.get('all', self.map_fn.get(region))
         if map_fn:
-            self.data[region] = await run_in_pool(map_fn, self.data[region])
+            map_args = [self.data[region]]
+            if len(inspect.signature(map_fn).parameters) >= 2:
+                map_args.append(region)
+            self.data[region] = await run_in_pool(map_fn, *map_args)
             logger.info(f"MasterData [{region}.{self.name}] 映射函数执行完成")
         await run_in_pool(self._build_indexed_data, region)
         await run_in_pool(self._build_sorted_data, region)
@@ -329,6 +337,9 @@ class MasterDataManager:
                 logger.print_exc(f"MasterData [{region}.{self.name}] 更新后回调 [{name}] 执行失败")
 
     async def _update_before_get(self, region: str):
+        dependencies = self.dependencies.get(region, self.dependencies.get('all', []))
+        for name in dependencies:
+            await MasterDataManager.get(name).get_data(region)
         async with self.lock:
             # 从缓存加载
             if self.data.get(region) is None:
@@ -463,6 +474,15 @@ class MasterDataManager:
             return func
         return _wrapper
 
+
+    @classmethod
+    def register_dependencies(cls, name: str, dependencies: Union[str, List[str]], regions='all'):
+        if isinstance(dependencies, str):
+            dependencies = [dependencies]
+        if isinstance(regions, str):
+            regions = [regions]
+        for region in regions:
+            cls.get(name).dependencies[region] = dependencies
     @classmethod
     def set_index_keys(cls, name: str, index_keys: Union[str, List[str], Dict[str, List[str]]]):
         """
@@ -687,6 +707,7 @@ MasterDataManager.set_index_keys("levels", ['id', 'levelType'])
 MasterDataManager.set_index_keys("eventMusics", ['id', 'eventId'])
 
 MasterDataManager.set_sort_keys('events', ['startAt'])
+MasterDataManager.register_dependencies('costume3ds', ['costume3dModels'], regions='all')
 
 # ================================ MasterData自定义下载 ================================ #
 
@@ -708,10 +729,7 @@ def convert_compact_data(data: Dict[str, Any]) -> List[Dict[str, Any]]:
                 item[key] = x
     return ret
 
-def get_master_extra_cache_path(region: str, name: str, suffix: str) -> str:
-    create_folder(pjoin(MASTER_DB_CACHE_DIR, region))
-    return pjoin(MASTER_DB_CACHE_DIR, region, f"{name}.{suffix}.json")
-            
+
 @MasterDataManager.download_function("resourceBoxes", regions=COMPACT_DATA_REGIONS)
 async def resource_boxes_download_fn(base_url):
     # resbox = await download_json(f"{base_url}/compactResourceBoxes.json")
@@ -733,27 +751,42 @@ async def resource_boxes_download_fn(base_url):
         return resbox
     return await run_in_pool(convert, resbox, resbox_detail)
 
-@MasterDataManager.download_function("costume3ds", regions=COMPACT_DATA_REGIONS)
-async def costume3ds_download_fn(base_url):
-    costume3ds = await download_json(f"{base_url}/costume3ds.json")
-    compact_costume3ds = await download_json(f"{base_url}/compactCostume3ds.json")
-    await adump_json(compact_costume3ds, get_master_extra_cache_path('cn', 'costume3ds', 'compact'))
-    return costume3ds
+def build_costume_assetbundle_name(assetbundle_name_override: str, item_id: int, color_id: int, part_type: str) -> str:
+    if assetbundle_name_override and "_" in assetbundle_name_override:
+        return assetbundle_name_override
+    base_name = assetbundle_name_override or f"{item_id // 1000:04d}"
+    suffix = f"_{color_id - 1:02d}" if color_id >= 2 else ""
+    return f"cos{base_name}_{part_type}{suffix}"
 
-@MasterDataManager.map_function("costume3ds", regions=COMPACT_DATA_REGIONS)
-def costume3ds_map_fn(costume3ds):
-    compact_cache_path = get_master_extra_cache_path('cn', 'costume3ds', 'compact')
-    if not os.path.exists(compact_cache_path):
+@MasterDataManager.map_function("costume3ds", regions='all')
+def costume3ds_map_fn(costume3ds, region):
+    costume3d_models_cache_path = MasterDataManager.get('costume3dModels').get_cache_path(region)
+    if not os.path.exists(costume3d_models_cache_path):
         return costume3ds
-    compact_items = {item['id']: item for item in convert_compact_data(load_json(compact_cache_path))}
+    costume3d_models_map = {}
+    for item in load_json(costume3d_models_cache_path):
+        costume3d_id = item['costume3dId']
+        if costume3d_id not in costume3d_models_map:
+            costume3d_models_map[costume3d_id] = []
+        costume3d_models_map[costume3d_id].append(item)
     for item in costume3ds:
-        compact_item = compact_items.get(item['id'])
-        if not compact_item:
+        if item.get('assetbundleName'):
             continue
-        # 保留新版 costume3ds 结构，仅将缺失字段从 compactCostume3ds 回填。
-        for key, value in compact_item.items():
-            if key not in item or item[key] is None:
-                item[key] = value
+        if item.get('_assetbundleName'):
+            item['assetbundleName'] = item['_assetbundleName']
+            continue
+        model_items = costume3d_models_map.get(item['id'], [])
+        if not model_items:
+            continue
+        model_item = next((x for x in model_items if x.get('thumbnailAssetbundleName')), None)
+        if model_item is None:
+            model_item = model_items[0]
+        item['assetbundleName'] = build_costume_assetbundle_name(
+            model_item.get('thumbnailAssetbundleName') or "",
+            item['id'],
+            item.get('colorId', 1),
+            item['partType'],
+        )
     return costume3ds
 
 
@@ -1310,5 +1343,3 @@ class WebJsonRes:
     async def get_hash(self, timeout: float = 5.0, raise_on_no_data: bool = True) -> str | None:
         await self._check_before_get(timeout, raise_on_no_data)
         return self.hash
-    
-
