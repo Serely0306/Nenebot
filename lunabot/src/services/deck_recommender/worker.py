@@ -90,6 +90,29 @@ class Worker:
             self.musicmetas_update_ts[region] = musicmetas_update_ts
             self.log(f"加载 {region} MusicMetas: {datetime.fromtimestamp(musicmetas_update_ts).strftime('%Y-%m-%d %H:%M:%S')}")
 
+    def refresh_data(self, region: str | None = None) -> dict:
+        self.init()
+        try:
+            # Recreate the underlying recommender so updated masterdata/musicmetas
+            # are definitely reloaded instead of relying on in-instance replacement.
+            self.recommender = SekaiDeckRecommend()
+            self.masterdata_version = {}
+            self.musicmetas_update_ts = {}
+            if region:
+                self._update_data(region)
+                self.log(f"主动刷新组卡数据完成: region={region}")
+            else:
+                self.log("主动刷新组卡数据完成: region=all(lazy)")
+            return {
+                'status': 'success',
+            }
+        except BaseException as e:
+            self.error("主动刷新组卡数据失败:", get_exc_desc(e))
+            return {
+                'status': 'error',
+                'message': get_exc_desc(e),
+            }
+
     def cache_userdata(self, userdata_bytes: bytes) -> dict:
         self.init()
         try:
@@ -278,6 +301,10 @@ class WorkerContext:
         self.task_queues[self.worker.worker_id].put(('cache_userdata', (userdata_bytes,), {},))
         return await self._get_result()
     
+    async def refresh_data(self, region: str | None = None) -> dict:
+        self.task_queues[self.worker.worker_id].put(('refresh_data', (region,), {},))
+        return await self._get_result()
+
     async def recommend(self, region: str, options: dict, userdata_hash: str) -> dict:
         self.task_queues[self.worker.worker_id].put(('recommend', (region, options, userdata_hash,), {},))
         return await self._get_result()

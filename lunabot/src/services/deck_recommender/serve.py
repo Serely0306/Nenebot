@@ -31,6 +31,7 @@ def update_data(
     db = load_json(DB_PATH, default={})
 
     missing_data = set()
+    updated_data = set()
 
     current_masterdata_version = db.get('masterdata_version', {}).get(region)
     if current_masterdata_version != masterdata_version:
@@ -41,6 +42,7 @@ def update_data(
             for name, md in masterdata.items():
                 write_file(pjoin(local_md_dir, name), md)
             db.setdefault('masterdata_version', {})[region] = masterdata_version
+            updated_data.add('masterdata')
             log(f"更新 {region} MasterData {current_masterdata_version} -> {masterdata_version}")
 
     current_musicmetas_update_ts = db.get('musicmetas_update_ts', {}).get(region)
@@ -51,6 +53,7 @@ def update_data(
             local_mm_path = pjoin(DATA_DIR, f'musicmetas_{region}.json')
             write_file(local_mm_path, musicmetas)
             db.setdefault('musicmetas_update_ts', {})[region] = musicmetas_update_ts
+            updated_data.add('musicmetas')
             current_ts_text = datetime.fromtimestamp(current_musicmetas_update_ts).strftime('%Y-%m-%d %H:%M:%S') if current_musicmetas_update_ts else 'None'
             local_ts_text = datetime.fromtimestamp(musicmetas_update_ts).strftime('%Y-%m-%d %H:%M:%S')
             log(f"更新 {region} MusicMetas {current_ts_text} -> {local_ts_text}")
@@ -62,6 +65,7 @@ def update_data(
             'missing_data': list(missing_data),
             "message": "缺少必要的数据，请上传完整数据",
         })
+    return updated_data
         
 async def extract_decompressed_payload(request: Request) -> list[bytes]:
     payload = decompress_zstd(await request.body())
@@ -104,7 +108,18 @@ async def _(request: Request):
             else:
                 masterdatas[key] = value
             
-        update_data(region, masterdata_version, masterdatas, musicmetas_update_ts, musicmetas)
+        updated_data = update_data(region, masterdata_version, masterdatas, musicmetas_update_ts, musicmetas)
+        if updated_data:
+            all_result = await asyncio.gather(*[
+                ctx.refresh_data(region) for ctx in WorkerContext.workers()
+            ])
+            for result in all_result:
+                if result.get('status') != 'success':
+                    raise HTTPException(
+                        status_code=500,
+                        detail=result.get('message', '组卡 worker 热刷新失败'),
+                    )
+            log(f"组卡 worker 热刷新完成: region={region}, updated={sorted(updated_data)}")
 
     except HTTPException as he:
         raise he
