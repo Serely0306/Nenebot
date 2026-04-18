@@ -1244,7 +1244,7 @@ async def compose_music_detail_image(ctx: SekaiHandlerContext, mid: int, title: 
 
                 # 排行榜
                 if _last_music_leaderboard_info:
-                    with Grid(row_count=len(live_type_keys) + 1, item_size_mode='flex').set_sep(4, 4).set_padding(16).set_content_align('c').set_item_align('c'):
+                    with Grid(row_count=len(live_type_keys) + 1, item_size_mode='fixed').set_sep(4, 4).set_padding(16).set_content_align('c').set_item_align('c'):
                         th_w, th_h = 80, 36
                         tr_w, tr_h = 130, 36
 
