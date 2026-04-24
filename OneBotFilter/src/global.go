@@ -12,7 +12,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// 过滤器模式
 const (
 	DEFAULT        = "default"
 	ON             = "on"
@@ -23,27 +22,22 @@ const (
 	SPECIFIC_RULES = "specific"
 )
 
-// 消息类型
 const (
 	PRIVATE = "private"
 	GROUP   = "group"
 )
 
-// 消息格式
-// 消息的内容类型
 const (
 	MESSAGE_FORMAT_ARRAY  = "array"
 	MESSAGE_FORMAT_STRING = "string"
 	MESSAGE_TYPE_TEXT     = "text"
 )
 
-// 布尔值
 var (
 	TRUE  = true
 	FALSE = false
 )
 
-// 配置文件相关
 var (
 	VP          *viper.Viper
 	CONFIG      Config
@@ -93,21 +87,7 @@ func ReLoadFilters() error {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
 
-	for _, botApp := range CONFIG.BotApps {
-		err := botApp.Check()
-		if err != nil {
-			log.Printf("bot %s 的配置文件校验失败：%v\n", botApp.Name, err)
-			continue
-		}
-		for _, filter := range ALL_FILTERS {
-			if filter.Name == botApp.Name {
-				filter.Compile(botApp)
-				log.Printf("已重新加载过滤器：%s\n", filter.String())
-				break
-			}
-		}
-	}
-	log.Printf("重新加载过滤器，共有%d个\n", len(ALL_FILTERS))
+	reloadFiltersLocked()
 	return nil
 }
 
@@ -115,58 +95,53 @@ func UpdateBotAppConfig(botName string, updateFunc func(*BotAppsConfig)) bool {
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
-	log.Printf("开始更新BotApp配置: %s\n", botName)
+	log.Printf("开始更新 BotApp 配置: %s\n", botName)
 
-	found := false
 	for i, botApp := range CONFIG.BotApps {
-		if botApp.Name == botName {
-			found = true
+		if botApp.Name != botName {
+			continue
+		}
 
-			oldPrivateIds := make([]int64, len(botApp.Private.Ids))
-			copy(oldPrivateIds, botApp.Private.Ids)
-			oldGroupIds := make([]int64, len(botApp.Group.Ids))
-			copy(oldGroupIds, botApp.Group.Ids)
+		candidate, err := cloneBotAppConfig(botApp)
+		if err != nil {
+			log.Printf("复制 BotApp 配置失败: %v\n", err)
+			return false
+		}
 
-			updateFunc(&CONFIG.BotApps[i])
+		updateFunc(&candidate)
 
-			configChanged := false
-			if !slices.Equal(oldPrivateIds, CONFIG.BotApps[i].Private.Ids) {
-				configChanged = true
-				log.Printf("私聊黑名单已改变: %v -> %v\n", oldPrivateIds, CONFIG.BotApps[i].Private.Ids)
-			}
-			if !slices.Equal(oldGroupIds, CONFIG.BotApps[i].Group.Ids) {
-				configChanged = true
-				log.Printf("群聊黑名单已改变: %v -> %v\n", oldGroupIds, CONFIG.BotApps[i].Group.Ids)
-			}
+		if err := resolveBotAppMessagesLocked(&candidate); err != nil {
+			log.Printf("更新后重建 BotApp 规则失败: %v\n", err)
+			return false
+		}
 
-			if !configChanged {
-				log.Printf("配置未改变，跳过保存\n")
-				return true
-			}
-
-			log.Printf("开始保存配置到文件...\n")
-			if err := saveConfigToFileLocked(); err != nil {
-				log.Printf("保存配置失败: %v\n", err)
-				return false
-			}
-			log.Printf("配置保存成功\n")
-
-			for _, filter := range ALL_FILTERS {
-				if filter.Name == botName {
-					filter.Compile(CONFIG.BotApps[i])
-					log.Printf("已重新编译过滤器: %s\n", filter.Name)
-					break
-				}
-			}
-
+		if persistedBotAppEqual(botApp, candidate) {
+			log.Printf("配置未变化，跳过保存\n")
 			return true
 		}
+
+		CONFIG.BotApps[i] = candidate
+
+		log.Printf("开始保存配置到文件...\n")
+		markInternalConfigWrite()
+		if err := saveConfigToFileLocked(); err != nil {
+			log.Printf("保存配置失败: %v\n", err)
+			return false
+		}
+		log.Printf("配置保存成功\n")
+
+		for _, filter := range ALL_FILTERS {
+			if filter.Name == botName {
+				filter.Compile(candidate)
+				log.Printf("已重新编译过滤器: %s\n", filter.Name)
+				break
+			}
+		}
+
+		return true
 	}
 
-	if !found {
-		log.Printf("未找到名为 %s 的BotApp配置\n", botName)
-	}
-
+	log.Printf("未找到名为 %s 的 BotApp 配置\n", botName)
 	return false
 }
 
@@ -174,10 +149,8 @@ func UpdateServerConfig(updateFunc func(*ServerConfig)) bool {
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
-	oldUserIDs := make([]int64, len(CONFIG.Server.Blocked.UserIDs))
-	copy(oldUserIDs, CONFIG.Server.Blocked.UserIDs)
-	oldGroupIDs := make([]int64, len(CONFIG.Server.Blocked.GroupIDs))
-	copy(oldGroupIDs, CONFIG.Server.Blocked.GroupIDs)
+	oldUserIDs := append([]int64(nil), CONFIG.Server.Blocked.UserIDs...)
+	oldGroupIDs := append([]int64(nil), CONFIG.Server.Blocked.GroupIDs...)
 
 	updateFunc(&CONFIG.Server)
 
@@ -185,6 +158,7 @@ func UpdateServerConfig(updateFunc func(*ServerConfig)) bool {
 		return true
 	}
 
+	markInternalConfigWrite()
 	if err := saveConfigToFileLocked(); err != nil {
 		log.Printf("保存服务端配置失败: %v\n", err)
 		return false
@@ -199,7 +173,7 @@ func saveConfigToFileLocked() error {
 		return errors.New("配置文件路径未设置")
 	}
 
-	log.Printf("正在保存配置文件到: %s\n", configPath)
+	log.Printf("正在保存配置文件到 %s\n", configPath)
 
 	if _, err := os.Stat(configPath); err != nil {
 		log.Printf("配置文件不存在或无法访问: %v\n", err)
@@ -210,7 +184,7 @@ func saveConfigToFileLocked() error {
 	if err := copyFile(configPath, backupPath); err != nil {
 		log.Printf("备份配置文件失败: %v\n", err)
 	} else {
-		log.Printf("已备份原配置文件到: %s\n", backupPath)
+		log.Printf("已备份原配置文件到 %s\n", backupPath)
 	}
 
 	data, err := yaml.Marshal(&CONFIG)
@@ -221,8 +195,7 @@ func saveConfigToFileLocked() error {
 
 	log.Printf("配置数据大小: %d 字节\n", len(data))
 
-	err = os.WriteFile(configPath, data, 0644)
-	if err != nil {
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
 		log.Printf("写入配置文件失败: %v\n", err)
 		return fmt.Errorf("写入配置文件失败: %v", err)
 	}
@@ -233,7 +206,7 @@ func saveConfigToFileLocked() error {
 		return fmt.Errorf("无法获取文件信息: %v", err)
 	}
 
-	log.Printf("文件保存成功! 大小: %d 字节, 修改时间: %v\n",
+	log.Printf("文件保存成功: 大小=%d 字节, 修改时间=%s\n",
 		fileInfo.Size(), fileInfo.ModTime().Format("2006-01-02 15:04:05"))
 
 	return nil

@@ -43,6 +43,7 @@
 # 其他自定义
 OneBotFilter/config.yaml
 OneBotFilter/help.yaml
+OneBotFilter/config/
 ZeroBot-Plugin-master/config.json
 ZeroBot-Plugin-master/go.mod
 ZeroBot-Plugin-master/config1.json
@@ -62,11 +63,9 @@ catcher/Catcher-android-arm64
 catcher/Catcher-android-arm64-test
 catcher/config-android.yaml
 # local test files
-OneBotFilter/src/command_test.go
-OneBotFilter/src/filters_test.go
+OneBotFilter/src/*_test.go
 upload/debug
 upload/tools
 upload/config.yaml
-OneBotFilter/src/fileconv_test.go
 OneBotFilter/help.png
 harukineo/

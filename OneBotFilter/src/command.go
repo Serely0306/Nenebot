@@ -10,6 +10,8 @@ import (
 const (
 	commandKindHelp          = "help"
 	commandKindBotSwitch     = "bot-switch"
+	commandKindPresetSet     = "preset-set"
+	commandKindPresetClear   = "preset-clear"
 	commandKindGlobalBlock   = "global-block"
 	commandKindGlobalUnblock = "global-unblock"
 )
@@ -20,6 +22,7 @@ type controlCommand struct {
 	BotName       string
 	TargetID      int64
 	TargetLabel   string
+	PresetName    string
 	ReplyText     string
 	RequiresAuth  bool
 	SuperUserOnly bool
@@ -64,6 +67,10 @@ func parseControlCommand(onebotMessage *OneBotMessage) (*controlCommand, bool) {
 		if cmd, ok := parseBotSwitchCommand(parts, onebotMessage.Partial.GroupId); ok {
 			return cmd, true
 		}
+	}
+
+	if cmd, ok := parsePresetCommand(parts, onebotMessage); ok {
+		return cmd, true
 	}
 
 	if cmd, ok := parseGlobalBlockCommand(parts, onebotMessage); ok {
@@ -118,6 +125,85 @@ func parseBotSwitchCommand(parts []string, currentGroupID int64) (*controlComman
 	default:
 		return nil, false
 	}
+}
+
+func parsePresetCommand(parts []string, onebotMessage *OneBotMessage) (*controlCommand, bool) {
+	if len(parts) == 0 {
+		return nil, false
+	}
+
+	switch parts[0] {
+	case "/preset", "/setpreset", "/\u8bbe\u7f6e\u9884\u8bbe":
+		if len(parts) != 3 && len(parts) != 4 {
+			return nil, false
+		}
+
+		var targetID int64
+		presetName := ""
+		switch len(parts) {
+		case 3:
+			if onebotMessage == nil || onebotMessage.Partial.MessageType != GROUP || onebotMessage.Partial.GroupId <= 0 {
+				return nil, false
+			}
+			targetID = onebotMessage.Partial.GroupId
+			presetName = parts[2]
+		case 4:
+			var ok bool
+			targetID, ok = parseNumericID(parts[2])
+			if !ok {
+				return nil, false
+			}
+			presetName = parts[3]
+		}
+
+		presetName = strings.TrimSpace(presetName)
+		if presetName == "" {
+			return nil, false
+		}
+
+		return &controlCommand{
+			Kind:          commandKindPresetSet,
+			MessageType:   GROUP,
+			BotName:       parts[1],
+			TargetID:      targetID,
+			TargetLabel:   "群聊",
+			PresetName:    presetName,
+			RequiresAuth:  true,
+			SuperUserOnly: true,
+		}, true
+
+	case "/clearpreset", "/\u6e05\u9664\u9884\u8bbe":
+		if len(parts) != 2 && len(parts) != 3 {
+			return nil, false
+		}
+
+		var targetID int64
+		switch len(parts) {
+		case 2:
+			if onebotMessage == nil || onebotMessage.Partial.MessageType != GROUP || onebotMessage.Partial.GroupId <= 0 {
+				return nil, false
+			}
+			targetID = onebotMessage.Partial.GroupId
+		case 3:
+			var ok bool
+			targetID, ok = parseNumericID(parts[2])
+			if !ok {
+				return nil, false
+			}
+		}
+
+		return &controlCommand{
+			Kind:          commandKindPresetClear,
+			MessageType:   GROUP,
+			BotName:       parts[1],
+			TargetID:      targetID,
+			TargetLabel:   "群聊",
+			RequiresAuth:  true,
+			SuperUserOnly: true,
+		}, true
+	}
+
+	return nil, false
 }
 
 func parseGlobalBlockCommand(parts []string, onebotMessage *OneBotMessage) (*controlCommand, bool) {
@@ -335,6 +421,10 @@ func handleControlCommand(onebotMessage *OneBotMessage) (bool, map[string]interf
 	switch cmd.Kind {
 	case commandKindBotSwitch:
 		return true, buildReply(onebotMessage, executeBotSwitchCommand(cmd))
+	case commandKindPresetSet:
+		return true, buildReply(onebotMessage, executePresetCommand(cmd, true))
+	case commandKindPresetClear:
+		return true, buildReply(onebotMessage, executePresetCommand(cmd, false))
 	case commandKindGlobalBlock:
 		return true, buildReply(onebotMessage, executeGlobalBlockCommand(cmd, true))
 	case commandKindGlobalUnblock:
@@ -390,6 +480,39 @@ func executeGlobalBlockCommand(cmd *controlCommand, shouldBlock bool) string {
 	}
 
 	return fmt.Sprintf("%s%s成功：%d", cmd.ReplyText, cmd.TargetLabel, cmd.TargetID)
+}
+
+func executePresetCommand(cmd *controlCommand, shouldSet bool) string {
+	ok := UpdateBotAppConfig(cmd.BotName, func(botApp *BotAppsConfig) {
+		target := &botApp.Group
+		if target.Presets == nil {
+			target.Presets = make(map[string]string)
+		}
+
+		key := strconv.FormatInt(cmd.TargetID, 10)
+		if shouldSet {
+			if strings.TrimSpace(target.Preset) == strings.TrimSpace(cmd.PresetName) {
+				delete(target.Presets, key)
+			} else {
+				target.Presets[key] = cmd.PresetName
+			}
+			return
+		}
+
+		delete(target.Presets, key)
+	})
+
+	if !ok {
+		if shouldSet {
+			return fmt.Sprintf("%s 预设切换失败: %d -> %s", cmd.BotName, cmd.TargetID, cmd.PresetName)
+		}
+		return fmt.Sprintf("%s 预设清除失败: %d", cmd.BotName, cmd.TargetID)
+	}
+
+	if shouldSet {
+		return fmt.Sprintf("%s 已为群聊 %d 切换到预设 %s", cmd.BotName, cmd.TargetID, cmd.PresetName)
+	}
+	return fmt.Sprintf("%s 已清除群聊 %d 的单独预设", cmd.BotName, cmd.TargetID)
 }
 
 func appendUniqueID(values []int64, target int64) []int64 {
