@@ -267,9 +267,12 @@ func (f *MessageTypeFilter) prefixPassWithRule(onebotMessage *OneBotMessage, spe
 	}
 
 	matchedPrefix := ""
+	matchedEmptyPrefix := false
 	for _, prefix := range prefixes {
 		if prefix == "" {
-			continue
+			matchedEmptyPrefix = true
+			matchedPrefix = ""
+			break
 		}
 		if strings.HasPrefix(textOld, prefix) {
 			matchedPrefix = prefix
@@ -277,8 +280,12 @@ func (f *MessageTypeFilter) prefixPassWithRule(onebotMessage *OneBotMessage, spe
 		}
 	}
 
-	if matchedPrefix == "" {
+	if matchedPrefix == "" && !matchedEmptyPrefix {
 		return false
+	}
+
+	if matchedEmptyPrefix && prefixReplace == "" {
+		prefixReplace = "/"
 	}
 
 	text := prefixReplace + textOld[len(matchedPrefix):]
