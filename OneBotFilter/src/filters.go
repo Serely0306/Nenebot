@@ -18,10 +18,11 @@ type MessageTypeFilter struct {
 }
 
 type SpecificRuleFilter struct {
-	Regexps       []*regexp.Regexp
-	Prefix        []string
-	PrefixReplace string
-	Mode          string
+	Regexps        []*regexp.Regexp
+	Prefix         []string
+	PrefixReplace  string
+	PrefixFiltered bool
+	Mode           string
 }
 
 type Filter struct {
@@ -125,7 +126,8 @@ func (f *Filter) Filter(onebotMessage *OneBotMessage) bool {
 		return false
 	}
 
-	if usedFilter.prefixPassWithRule(onebotMessage, specificRule) {
+	prefixMatched := usedFilter.applyPrefixWithRule(onebotMessage, specificRule)
+	if prefixMatched && !usedFilter.getPrefixFiltered(specificRule) {
 		if CONFIG.Server.Debug {
 			log.Printf("%s：命中前缀直通：%s\n", f.Name, onebotMessage.Partial.RawMessage)
 		}
@@ -183,16 +185,22 @@ func (f *MessageTypeFilter) Compile(cfg MessageTypeConfig) *MessageTypeFilter {
 			finalPrefixReplace = *rule.PrefixReplace
 		}
 
+		finalPrefixFiltered := f.Message.PrefixFiltered
+		if rule.PrefixFiltered != nil {
+			finalPrefixFiltered = *rule.PrefixFiltered
+		}
+
 		finalMode := f.Message.Mode
 		if rule.Mode != "" {
 			finalMode = rule.Mode
 		}
 
 		f.SpecificRules[id] = &SpecificRuleFilter{
-			Regexps:       compileRegexps(finalFilters, fmt.Sprintf("特定规则 %d", id)),
-			Prefix:        finalPrefix,
-			PrefixReplace: finalPrefixReplace,
-			Mode:          finalMode,
+			Regexps:        compileRegexps(finalFilters, fmt.Sprintf("特定规则 %d", id)),
+			Prefix:         finalPrefix,
+			PrefixReplace:  finalPrefixReplace,
+			PrefixFiltered: finalPrefixFiltered,
+			Mode:           finalMode,
 		}
 	}
 
@@ -235,7 +243,7 @@ func (f *MessageTypeFilter) Filter(id int64) bool {
 	}
 }
 
-func (f *MessageTypeFilter) prefixPassWithRule(onebotMessage *OneBotMessage, specificRule *SpecificRuleFilter) bool {
+func (f *MessageTypeFilter) applyPrefixWithRule(onebotMessage *OneBotMessage, specificRule *SpecificRuleFilter) bool {
 	prefixes := f.getPrefix(specificRule)
 	prefixReplace := f.getPrefixReplace(specificRule)
 	if len(prefixes) == 0 {
@@ -271,8 +279,7 @@ func (f *MessageTypeFilter) prefixPassWithRule(onebotMessage *OneBotMessage, spe
 	for _, prefix := range prefixes {
 		if prefix == "" {
 			matchedEmptyPrefix = true
-			matchedPrefix = ""
-			break
+			continue
 		}
 		if strings.HasPrefix(textOld, prefix) {
 			matchedPrefix = prefix
@@ -280,8 +287,10 @@ func (f *MessageTypeFilter) prefixPassWithRule(onebotMessage *OneBotMessage, spe
 		}
 	}
 
-	if matchedPrefix == "" && !matchedEmptyPrefix {
-		return false
+	if matchedPrefix == "" {
+		if !matchedEmptyPrefix {
+			return false
+		}
 	}
 
 	if matchedEmptyPrefix && prefixReplace == "" {
@@ -325,12 +334,7 @@ func (f *MessageTypeFilter) prefixPassWithRule(onebotMessage *OneBotMessage, spe
 func (f *MessageTypeFilter) processFilterWithRule(filterName string, onebotMessage *OneBotMessage, specificRule *SpecificRuleFilter) *bool {
 	ruleMode := f.getRuleMode(specificRule)
 
-	var regexps []*regexp.Regexp
-	if specificRule != nil {
-		regexps = specificRule.Regexps
-	} else {
-		regexps = f.Regexps
-	}
+	regexps := f.getRegexps(specificRule)
 
 	if onebotMessage.Partial.MessageFormat == MESSAGE_FORMAT_ARRAY {
 		for _, message := range onebotMessage.Partial.MessageArray {
@@ -401,6 +405,20 @@ func (f *MessageTypeFilter) getPrefixReplace(specificRule *SpecificRuleFilter) s
 		return specificRule.PrefixReplace
 	}
 	return f.Message.PrefixReplace
+}
+
+func (f *MessageTypeFilter) getPrefixFiltered(specificRule *SpecificRuleFilter) bool {
+	if specificRule != nil {
+		return specificRule.PrefixFiltered
+	}
+	return f.Message.PrefixFiltered
+}
+
+func (f *MessageTypeFilter) getRegexps(specificRule *SpecificRuleFilter) []*regexp.Regexp {
+	if specificRule != nil {
+		return specificRule.Regexps
+	}
+	return f.Regexps
 }
 
 func compileRegexps(filters []string, scope string) []*regexp.Regexp {

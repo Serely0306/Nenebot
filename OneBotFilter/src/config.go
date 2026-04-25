@@ -95,24 +95,26 @@ type MessageTypeConfig struct {
 }
 
 type MessageContentConfig struct {
-	Mode          string                        `mapstructure:"mode" yaml:"mode"`
-	Filters       []string                      `mapstructure:"filters" yaml:"filters"`
-	Prefix        []string                      `mapstructure:"prefix" yaml:"prefix"`
-	PrefixReplace string                        `mapstructure:"prefix-replace" yaml:"prefix-replace"`
-	SpecificRules map[string]SpecificRuleConfig `mapstructure:"specific-rules" yaml:"specific-rules"`
+	Mode           string                        `mapstructure:"mode" yaml:"mode"`
+	Filters        []string                      `mapstructure:"filters" yaml:"filters"`
+	Prefix         []string                      `mapstructure:"prefix" yaml:"prefix"`
+	PrefixReplace  string                        `mapstructure:"prefix-replace" yaml:"prefix-replace"`
+	PrefixFiltered bool                          `mapstructure:"prefix-filtered" yaml:"prefix-filtered"`
+	SpecificRules  map[string]SpecificRuleConfig `mapstructure:"specific-rules" yaml:"specific-rules"`
 }
 
 type SpecificRuleConfig struct {
-	Mode          string   `mapstructure:"mode" yaml:"mode,omitempty"`
-	Filters       []string `mapstructure:"filters" yaml:"filters,omitempty"`
-	Prefix        []string `mapstructure:"prefix" yaml:"prefix,omitempty"`
-	AddFilters    []string `mapstructure:"add-filters" yaml:"add-filters,omitempty"`
-	RemoveFilters []string `mapstructure:"remove-filters" yaml:"remove-filters,omitempty"`
-	ClearFilters  bool     `mapstructure:"clear-filters" yaml:"clear-filters,omitempty"`
-	AddPrefix     []string `mapstructure:"add-prefix" yaml:"add-prefix,omitempty"`
-	RemovePrefix  []string `mapstructure:"remove-prefix" yaml:"remove-prefix,omitempty"`
-	ClearPrefix   bool     `mapstructure:"clear-prefix" yaml:"clear-prefix,omitempty"`
-	PrefixReplace *string  `mapstructure:"prefix-replace" yaml:"prefix-replace,omitempty"`
+	Mode           string   `mapstructure:"mode" yaml:"mode,omitempty"`
+	Filters        []string `mapstructure:"filters" yaml:"filters,omitempty"`
+	Prefix         []string `mapstructure:"prefix" yaml:"prefix,omitempty"`
+	AddFilters     []string `mapstructure:"add-filters" yaml:"add-filters,omitempty"`
+	RemoveFilters  []string `mapstructure:"remove-filters" yaml:"remove-filters,omitempty"`
+	ClearFilters   bool     `mapstructure:"clear-filters" yaml:"clear-filters,omitempty"`
+	AddPrefix      []string `mapstructure:"add-prefix" yaml:"add-prefix,omitempty"`
+	RemovePrefix   []string `mapstructure:"remove-prefix" yaml:"remove-prefix,omitempty"`
+	ClearPrefix    bool     `mapstructure:"clear-prefix" yaml:"clear-prefix,omitempty"`
+	PrefixReplace  *string  `mapstructure:"prefix-replace" yaml:"prefix-replace,omitempty"`
+	PrefixFiltered *bool    `mapstructure:"prefix-filtered" yaml:"prefix-filtered,omitempty"`
 }
 
 var (
@@ -401,14 +403,16 @@ func loadPresetMessageLocked(baseDir string, presetCache map[string]MessageConte
 
 func presetMessageToSpecificRule(message MessageContentConfig) SpecificRuleConfig {
 	prefixReplace := message.PrefixReplace
+	prefixFiltered := message.PrefixFiltered
 	rule := SpecificRuleConfig{
-		Filters:       append([]string(nil), message.Filters...),
-		Prefix:        append([]string(nil), message.Prefix...),
-		ClearFilters:  true,
-		ClearPrefix:   true,
-		AddFilters:    append([]string(nil), message.Filters...),
-		AddPrefix:     append([]string(nil), message.Prefix...),
-		PrefixReplace: &prefixReplace,
+		Filters:        append([]string(nil), message.Filters...),
+		Prefix:         append([]string(nil), message.Prefix...),
+		ClearFilters:   true,
+		ClearPrefix:    true,
+		AddFilters:     append([]string(nil), message.Filters...),
+		AddPrefix:      append([]string(nil), message.Prefix...),
+		PrefixReplace:  &prefixReplace,
+		PrefixFiltered: &prefixFiltered,
 	}
 	if message.Mode != "" {
 		rule.Mode = message.Mode
@@ -418,11 +422,12 @@ func presetMessageToSpecificRule(message MessageContentConfig) SpecificRuleConfi
 
 func cloneMessageContentConfig(message MessageContentConfig) MessageContentConfig {
 	cloned := MessageContentConfig{
-		Mode:          message.Mode,
-		Filters:       append([]string(nil), message.Filters...),
-		Prefix:        append([]string(nil), message.Prefix...),
-		PrefixReplace: message.PrefixReplace,
-		SpecificRules: cloneSpecificRules(message.SpecificRules),
+		Mode:           message.Mode,
+		Filters:        append([]string(nil), message.Filters...),
+		Prefix:         append([]string(nil), message.Prefix...),
+		PrefixReplace:  message.PrefixReplace,
+		PrefixFiltered: message.PrefixFiltered,
+		SpecificRules:  cloneSpecificRules(message.SpecificRules),
 	}
 	return cloned
 }
@@ -448,6 +453,10 @@ func cloneSpecificRules(rules map[string]SpecificRuleConfig) map[string]Specific
 		if rule.PrefixReplace != nil {
 			value := *rule.PrefixReplace
 			copiedRule.PrefixReplace = &value
+		}
+		if rule.PrefixFiltered != nil {
+			value := *rule.PrefixFiltered
+			copiedRule.PrefixFiltered = &value
 		}
 		cloned[key] = copiedRule
 	}
