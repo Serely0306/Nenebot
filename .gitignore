@@ -29,6 +29,15 @@
 # node
 **/node_modules/
 
+# go test / local tool caches
+**/.gocache/
+**/.gomodcache/
+**/.gopath/
+**/.gotelemetry/
+**/coverage.out
+**/*.coverprofile
+**/*_test.go
+
 # backups
 **/*.bak
 **/*.old
@@ -41,11 +50,7 @@
 **/*.so
 
 # 其他自定义
-OneBotFilter/config.yaml
-OneBotFilter/help.yaml
-OneBotFilter/config/
 ZeroBot-Plugin-master/config.json
-ZeroBot-Plugin-master/go.mod
 ZeroBot-Plugin-master/config1.json
 haruki/
 **/.gitignore
@@ -59,13 +64,13 @@ haruki-tool/Haruki-Sekai-API/cn
 lunabot-latest
 lunabot/config/
 scripts/
+OneBotFilter/assets
+OneBotFilter/docs
+OneBotFilter/config
 catcher/Catcher-android-arm64
 catcher/Catcher-android-arm64-test
 catcher/config-android.yaml
-# local test files
-OneBotFilter/src/*_test.go
 upload/debug
 upload/tools
 upload/config.yaml
-OneBotFilter/help.png
 harukineo/

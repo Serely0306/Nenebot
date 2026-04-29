@@ -1,6 +1,16 @@
 ﻿# OneBotFilter 配置说明
 
-本文档只说明 `config.yaml` 的结构、字段含义和常见写法。
+本文档只说明 `config/filter/config.yaml` 的结构、字段含义和常见写法。
+
+当前目录结构中的相关配置/资源路径：
+
+- 主配置：`config/filter/config.yaml`
+- 预设目录：`config/filter/presets/`
+- 帮助配置：`config/help/config.yaml`
+- 统计配置：`config/stats/config.yaml`
+- 帮助图片：`data/help/help.png`
+- 统计数据库：`data/stats/stats.db`
+- 字体：`assets/fonts/simkai.ttf`
 
 ## 顶层结构
 
@@ -336,7 +346,7 @@ specific-rules:
 行为：
 - `/禁用 bot名`：把当前群加入该 Bot 的 `group.ids` 黑名单
 - `/启用 bot名`：把当前群从该 Bot 的 `group.ids` 黑名单移除
-- 修改后会写回 `config.yaml`
+- 修改后会写回 `config/filter/config.yaml`
 - 写回后会自动热更新
 
 ## 配置示例
