@@ -10,25 +10,36 @@ import (
 	"onebotfilter/src/core"
 )
 
-func ParseStatsArgs(args []string, now time.Time) (string, DateRange, error) {
+func ParseStatsArgs(args []string, now time.Time) (bool, DateRange, error) {
 	if len(args) == 0 {
 		r, err := ParseTimeExpr("", now)
-		return "", r, err
+		return false, r, err
 	}
 
-	if isTimeExpr(args[0]) {
-		r, err := ParseTimeExpr(args[0], now)
-		return "", r, err
+	if isGlobalStatsKeyword(args[0]) {
+		if len(args) == 1 {
+			r, err := ParseTimeExpr("", now)
+			return true, r, err
+		}
+		if len(args) == 2 {
+			r, err := ParseTimeExpr(args[1], now)
+			return true, r, err
+		}
+		return false, DateRange{}, fmt.Errorf("用法：/stats [时间] 或 /stats global [时间]")
 	}
-
-	bot := strings.TrimSpace(args[0])
-	if len(args) == 1 {
-		r, err := ParseTimeExpr("", now)
-		return bot, r, err
+	if len(args) != 1 {
+		return false, DateRange{}, fmt.Errorf("用法：/stats [时间] 或 /stats global [时间]")
 	}
+	if !isTimeExpr(args[0]) {
+		return false, DateRange{}, fmt.Errorf("用法：/stats [时间] 或 /stats global [时间]")
+	}
+	r, err := ParseTimeExpr(args[0], now)
+	return false, r, err
+}
 
-	r, err := ParseTimeExpr(args[1], now)
-	return bot, r, err
+func isGlobalStatsKeyword(text string) bool {
+	text = strings.TrimSpace(strings.ToLower(text))
+	return text == "global" || text == "全局"
 }
 
 func ParseTimeExpr(expr string, now time.Time) (DateRange, error) {
@@ -175,11 +186,14 @@ func (m *Module) TryHandle(msg *core.OneBotMessage) (bool, map[string]interface{
 			return true, nil
 		}
 		args := strings.Fields(strings.TrimSpace(strings.TrimPrefix(text, "/stats")))
-		botName, r, err := ParseStatsArgs(args, time.Now())
+		globalView, r, err := ParseStatsArgs(args, time.Now())
 		if err != nil {
-			return true, buildReply(msg, fmt.Sprintf("时间参数错误: %v", err))
+			return true, buildReply(msg, err.Error())
 		}
-		return true, m.handleStats(msg, botName, r)
+		if globalView {
+			return true, m.handleGlobalStats(msg, r)
+		}
+		return true, m.handleStats(msg, r)
 	default:
 		return false, nil
 	}
@@ -224,7 +238,7 @@ func (m *Module) handleRank(msg *core.OneBotMessage, r DateRange) map[string]int
 	return buildImageReply(msg, imageBytes)
 }
 
-func (m *Module) handleStats(msg *core.OneBotMessage, botName string, r DateRange) map[string]interface{} {
+func (m *Module) handleStats(msg *core.OneBotMessage, r DateRange) map[string]interface{} {
 	sessionType, sessionID := sessionFromMessage(msg)
 	summary, err := m.store.QuerySessionSummary(sessionType, sessionID, r)
 	if err != nil {
@@ -236,30 +250,8 @@ func (m *Module) handleStats(msg *core.OneBotMessage, botName string, r DateRang
 		return buildReply(msg, fmt.Sprintf("bot 统计查询失败: %v", err))
 	}
 
-	if botName != "" {
-		filtered := make([]BotSendRank, 0, 1)
-		for _, row := range botRows {
-			if row.BotName == botName {
-				filtered = append(filtered, row)
-				break
-			}
-		}
-		if len(filtered) == 0 {
-			return buildReply(msg, fmt.Sprintf("未找到 bot：%s", botName))
-		}
-		botRows = filtered
-	}
-
 	if summary.RecvCount == 0 && len(botRows) == 0 && summary.SendCount == 0 {
 		return buildReply(msg, "该时间范围暂无统计记录")
-	}
-
-	totalBotSend := int64(0)
-	for _, row := range botRows {
-		totalBotSend += row.SendCount
-	}
-	if botName == "" {
-		totalBotSend = summary.BotSendCount
 	}
 
 	renderRows := make([]RankRow, 0, len(botRows))
@@ -268,13 +260,55 @@ func (m *Module) handleStats(msg *core.OneBotMessage, botName string, r DateRang
 			Index:   i + 1,
 			Name:    row.BotName,
 			Count:   row.SendCount,
-			Percent: percentage(row.SendCount, max64(1, totalBotSend)),
+			Percent: percentage(row.SendCount, max64(1, summary.BotSendCount)),
 		})
 	}
 
 	imageBytes, err := RenderStatsImage(m.fontPath, RenderStatsInput{
-		Title:             statsTitle(r, botName),
+		Title:             statsTitle(r),
 		SessionName:       sessionLabel(msg),
+		RangeLabel:        rangeLabel(r),
+		RecvCount:         summary.RecvCount,
+		SendCount:         summary.SendCount,
+		BotSendCount:      summary.BotSendCount,
+		InternalSendCount: summary.InternalSendCount,
+		Rows:              renderRows,
+	})
+	if err != nil {
+		return buildReply(msg, fmt.Sprintf("统计图片生成失败: %v", err))
+	}
+	return buildImageReply(msg, imageBytes)
+}
+
+func (m *Module) handleGlobalStats(msg *core.OneBotMessage, r DateRange) map[string]interface{} {
+	summary, err := m.store.QueryGlobalSummary(r)
+	if err != nil {
+		return buildReply(msg, fmt.Sprintf("统计查询失败: %v", err))
+	}
+
+	rows, err := m.store.QuerySessionTraffic(r)
+	if err != nil {
+		return buildReply(msg, fmt.Sprintf("全局统计查询失败: %v", err))
+	}
+	if summary.RecvCount == 0 && summary.SendCount == 0 && len(rows) == 0 {
+		return buildReply(msg, "该时间范围暂无统计记录")
+	}
+
+	totalTraffic := max64(1, summary.RecvCount+summary.SendCount)
+	renderRows := make([]RankRow, 0, len(rows))
+	for i, row := range rows {
+		count := row.RecvCount + row.SendCount
+		renderRows = append(renderRows, RankRow{
+			Index:   i + 1,
+			Name:    globalSessionLabel(m.cfg.PrivateLabel, row.SessionType, row.SessionID),
+			Count:   count,
+			Percent: percentage(count, totalTraffic),
+		})
+	}
+
+	imageBytes, err := RenderStatsImage(m.fontPath, RenderStatsInput{
+		Title:             globalStatsTitle(r),
+		SessionName:       "全部会话",
 		RangeLabel:        rangeLabel(r),
 		RecvCount:         summary.RecvCount,
 		SendCount:         summary.SendCount,
@@ -398,17 +432,28 @@ func rankTitle(r DateRange) string {
 	}
 }
 
-func statsTitle(r DateRange, botName string) string {
-	if botName == "" {
-		if r.Mode == ModeAll {
-			return "总消息统计"
-		}
-		return "消息统计"
-	}
+func statsTitle(r DateRange) string {
 	if r.Mode == ModeAll {
-		return fmt.Sprintf("%s 总统计", botName)
+		return "总消息统计"
 	}
-	return fmt.Sprintf("%s 统计", botName)
+	return "消息统计"
+}
+
+func globalStatsTitle(r DateRange) string {
+	if r.Mode == ModeAll {
+		return "全局总消息统计"
+	}
+	return "全局消息统计"
+}
+
+func globalSessionLabel(privateLabel, sessionType string, sessionID int64) string {
+	if sessionType == "private" {
+		if strings.TrimSpace(privateLabel) != "" {
+			return privateLabel
+		}
+		return "私聊汇总"
+	}
+	return fmt.Sprintf("群聊(%d)", sessionID)
 }
 
 func percentage(v, total int64) float64 {

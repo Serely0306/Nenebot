@@ -123,6 +123,8 @@ type Paths struct {
 	StatsConfig  string
 	HelpImage    string
 	StatsDB      string
+	LogDir       string
+	LogFile      string
 	FontFile     string
 }
 
@@ -135,6 +137,8 @@ func DefaultPaths(root string) Paths {
 		StatsConfig:  filepath.Join(root, "config", "stats", "config.yaml"),
 		HelpImage:    filepath.Join(root, "data", "help", "help.png"),
 		StatsDB:      filepath.Join(root, "data", "stats", "stats.db"),
+		LogDir:       filepath.Join(root, "data", "log"),
+		LogFile:      filepath.Join(root, "data", "log", "onebotfilter.log"),
 		FontFile:     filepath.Join("assets", "fonts", "simkai.ttf"),
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,15 +13,15 @@ import (
 )
 
 type Config struct {
-	Enabled                 bool     `mapstructure:"enabled"`
-	PrivateLabel            string   `mapstructure:"private_label"`
-	DefaultRankLimit        int      `mapstructure:"default_rank_limit"`
-	MaxRankLimit            int      `mapstructure:"max_rank_limit"`
-	ImageWidth              int      `mapstructure:"image_width"`
-	QueueSize               int      `mapstructure:"queue_size"`
-	CountMessageSent        bool     `mapstructure:"count_message_sent"`
-	CountFilterInternalSend bool     `mapstructure:"count_filter_internal_send"`
-	SendActionWhitelist     []string `mapstructure:"send_action_whitelist"`
+	Enabled                 bool     `mapstructure:"enabled" yaml:"enabled"`
+	PrivateLabel            string   `mapstructure:"private_label" yaml:"private_label"`
+	DefaultRankLimit        int      `mapstructure:"default_rank_limit" yaml:"default_rank_limit"`
+	MaxRankLimit            int      `mapstructure:"max_rank_limit" yaml:"max_rank_limit"`
+	ImageWidth              int      `mapstructure:"image_width" yaml:"image_width"`
+	QueueSize               int      `mapstructure:"queue_size" yaml:"queue_size"`
+	CountMessageSent        bool     `mapstructure:"count_message_sent" yaml:"count_message_sent"`
+	CountFilterInternalSend bool     `mapstructure:"count_filter_internal_send" yaml:"count_filter_internal_send"`
+	SendActionWhitelist     []string `mapstructure:"send_action_whitelist" yaml:"send_action_whitelist"`
 }
 
 type NameResolver interface {
@@ -123,7 +124,7 @@ func (m *Module) ShouldCountOutgoing(action string) bool {
 	}
 	action = strings.TrimSpace(action)
 	for _, item := range m.cfg.SendActionWhitelist {
-		if action == strings.TrimSpace(item) {
+		if strings.EqualFold(action, strings.TrimSpace(item)) {
 			return true
 		}
 	}
@@ -188,12 +189,32 @@ func (m *Module) HandleBotAction(botName string, msgType int, msgData []byte) {
 		return
 	}
 
-	action, sessionType, sessionID, ok := parseOutgoingAction(msgData)
-	if !ok || !m.ShouldCountOutgoing(action) {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(msgData, &payload); err != nil {
+		m.debugf("忽略 bot 发送: bot=%s reason=parse-failed payload=%s", botName, truncatePayload(msgData))
+		return
+	}
+	action := strings.TrimSpace(actionNameFromPayload(payload))
+	if action == "" {
+		m.debugf("忽略 bot 发送: bot=%s reason=missing-action payload=%s", botName, truncatePayload(msgData))
+		return
+	}
+	if !strings.HasPrefix(strings.ToLower(action), "send") {
+		return
+	}
+
+	action, sessionType, sessionID, ok := parseOutgoingPayload(payload)
+	if !ok {
+		m.debugf("忽略 bot 发送: bot=%s action=%s reason=invalid-send-payload payload=%s", botName, action, truncatePayload(msgData))
+		return
+	}
+	if !m.ShouldCountOutgoing(action) {
+		m.debugf("忽略 bot 发送: bot=%s action=%s reason=not-whitelisted session=%s(%d)", botName, action, sessionType, sessionID)
 		return
 	}
 
 	now := time.Now()
+	m.debugf("记录 bot 发送: bot=%s action=%s session=%s(%d)", botName, action, sessionType, sessionID)
 	_ = m.Enqueue(Event{
 		EventTime:   now,
 		EventDate:   now.Format("2006-01-02"),
@@ -254,8 +275,13 @@ func parseOutgoingResponse(payload map[string]interface{}) (string, string, int6
 	return parseOutgoingPayload(payload)
 }
 
-func parseOutgoingPayload(payload map[string]interface{}) (string, string, int64, bool) {
+func actionNameFromPayload(payload map[string]interface{}) string {
 	action, _ := payload["action"].(string)
+	return strings.TrimSpace(action)
+}
+
+func parseOutgoingPayload(payload map[string]interface{}) (string, string, int64, bool) {
+	action := actionNameFromPayload(payload)
 	params, _ := payload["params"].(map[string]interface{})
 	if action == "" || params == nil {
 		return "", "", 0, false
@@ -289,14 +315,36 @@ func toInt64(v interface{}) int64 {
 	switch value := v.(type) {
 	case int:
 		return int64(value)
+	case int32:
+		return int64(value)
 	case int64:
 		return value
+	case float32:
+		return int64(value)
 	case float64:
 		return int64(value)
 	case json.Number:
 		n, _ := value.Int64()
 		return n
+	case string:
+		n, _ := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		return n
 	default:
 		return 0
 	}
+}
+
+func (m *Module) debugf(format string, args ...interface{}) {
+	if m == nil || !core.CONFIG.Server.Debug {
+		return
+	}
+	log.Printf("[stats] "+format, args...)
+}
+
+func truncatePayload(msgData []byte) string {
+	text := strings.TrimSpace(string(msgData))
+	if len(text) <= 240 {
+		return text
+	}
+	return text[:240] + "..."
 }

@@ -17,6 +17,13 @@ var (
 	falseValue = false
 )
 
+func debugf(format string, args ...interface{}) {
+	if !core.CONFIG.Server.Debug {
+		return
+	}
+	log.Printf(format, args...)
+}
+
 type MessageTypeFilter struct {
 	MessageTypeConfig
 	Regexps       []*regexp.Regexp
@@ -42,25 +49,14 @@ func (f *Filter) Filter(onebotMessage *core.OneBotMessage) bool {
 		return false
 	}
 
-	if core.CONFIG.Server.Debug {
-		log.Printf("%s：开始处理消息，类型=%s，群ID=%d，内容=%s\n",
+	if isGloballyBlocked(onebotMessage) {
+		debugf("%s：消息命中全局拉黑，已忽略：message_type=%s group=%d user=%d raw=%s\n",
 			f.Name,
 			onebotMessage.Partial.MessageType,
 			onebotMessage.Partial.GroupID,
+			onebotMessage.Partial.UserID,
 			onebotMessage.Partial.RawMessage,
 		)
-	}
-
-	if isGloballyBlocked(onebotMessage) {
-		if core.CONFIG.Server.Debug {
-			log.Printf("%s：消息命中全局拉黑，已忽略：message_type=%s group=%d user=%d raw=%s\n",
-				f.Name,
-				onebotMessage.Partial.MessageType,
-				onebotMessage.Partial.GroupID,
-				onebotMessage.Partial.UserID,
-				onebotMessage.Partial.RawMessage,
-			)
-		}
 		return false
 	}
 
@@ -70,9 +66,7 @@ func (f *Filter) Filter(onebotMessage *core.OneBotMessage) bool {
 	switch onebotMessage.Partial.MessageType {
 	case PRIVATE:
 		if onebotMessage.Partial.UserID == 0 {
-			if core.CONFIG.Server.Debug {
-				log.Printf("%s：私聊消息缺少 user_id，已阻止：%s\n", f.Name, onebotMessage.Partial.RawMessage)
-			}
+			debugf("%s：私聊消息缺少 user_id，已阻止：%s\n", f.Name, onebotMessage.Partial.RawMessage)
 			return false
 		}
 		if f.Private.Filter(onebotMessage.Partial.UserID) {
@@ -80,16 +74,12 @@ func (f *Filter) Filter(onebotMessage *core.OneBotMessage) bool {
 			targetID = onebotMessage.Partial.UserID
 			break
 		}
-		if core.CONFIG.Server.Debug {
-			log.Printf("%s：私聊 %d 未通过会话级过滤：%s\n", f.Name, onebotMessage.Partial.UserID, onebotMessage.Partial.RawMessage)
-		}
+		debugf("%s：私聊 %d 未通过会话级过滤：%s\n", f.Name, onebotMessage.Partial.UserID, onebotMessage.Partial.RawMessage)
 		return false
 
 	case GROUP:
 		if onebotMessage.Partial.GroupID == 0 {
-			if core.CONFIG.Server.Debug {
-				log.Printf("%s：群消息缺少 group_id，已阻止：%s\n", f.Name, onebotMessage.Partial.RawMessage)
-			}
+			debugf("%s：群消息缺少 group_id，已阻止：%s\n", f.Name, onebotMessage.Partial.RawMessage)
 			return false
 		}
 		if f.Group.Filter(onebotMessage.Partial.GroupID) {
@@ -97,15 +87,10 @@ func (f *Filter) Filter(onebotMessage *core.OneBotMessage) bool {
 			targetID = onebotMessage.Partial.GroupID
 			break
 		}
-		if core.CONFIG.Server.Debug {
-			log.Printf("%s：群 %d 未通过会话级过滤：%s\n", f.Name, onebotMessage.Partial.GroupID, onebotMessage.Partial.RawMessage)
-		}
+		debugf("%s：群 %d 未通过会话级过滤：%s\n", f.Name, onebotMessage.Partial.GroupID, onebotMessage.Partial.RawMessage)
 		return false
 
 	default:
-		if core.CONFIG.Server.Debug {
-			log.Printf("%s：message_type=%s，直接放行：%s\n", f.Name, onebotMessage.Partial.MessageType, onebotMessage.Partial.RawMessage)
-		}
 		return true
 	}
 
@@ -117,23 +102,16 @@ func (f *Filter) Filter(onebotMessage *core.OneBotMessage) bool {
 	}
 
 	if ruleMode == "" || ruleMode == ON {
-		if core.CONFIG.Server.Debug {
-			log.Printf("%s：消息直接通过：%s\n", f.Name, onebotMessage.Partial.RawMessage)
-		}
 		return true
 	}
 	if ruleMode == OFF {
-		if core.CONFIG.Server.Debug {
-			log.Printf("%s：message.mode=off，已阻止：%s\n", f.Name, onebotMessage.Partial.RawMessage)
-		}
+		debugf("%s：message.mode=off，已阻止：%s\n", f.Name, onebotMessage.Partial.RawMessage)
 		return false
 	}
 
 	prefixMatched := usedFilter.applyPrefixWithRule(onebotMessage, specificRule)
 	if prefixMatched && !usedFilter.getPrefixFiltered(specificRule) {
-		if core.CONFIG.Server.Debug {
-			log.Printf("%s：命中前缀直通：%s\n", f.Name, onebotMessage.Partial.RawMessage)
-		}
+		debugf("%s：命中前缀直通：%s\n", f.Name, onebotMessage.Partial.RawMessage)
 		return true
 	}
 
@@ -144,14 +122,9 @@ func (f *Filter) Filter(onebotMessage *core.OneBotMessage) bool {
 
 	switch ruleMode {
 	case WHITELIST:
-		if core.CONFIG.Server.Debug {
-			log.Printf("%s：未命中白名单规则，已阻止：%s\n", f.Name, onebotMessage.Partial.RawMessage)
-		}
+		debugf("%s：未命中白名单规则，已阻止：%s\n", f.Name, onebotMessage.Partial.RawMessage)
 		return false
 	case BLACKLIST:
-		if core.CONFIG.Server.Debug {
-			log.Printf("%s：未命中黑名单规则，默认放行：%s\n", f.Name, onebotMessage.Partial.RawMessage)
-		}
 		return true
 	}
 
@@ -355,10 +328,10 @@ func (f *MessageTypeFilter) processFilterWithRule(filterName string, onebotMessa
 				if ok, err := pattern.MatchString(text); ok {
 					switch ruleMode {
 					case WHITELIST:
-						log.Printf("%s：命中白名单消息：%s\n", filterName, onebotMessage.Partial.RawMessage)
+						debugf("%s：命中白名单消息：%s\n", filterName, onebotMessage.Partial.RawMessage)
 						return &trueValue
 					case BLACKLIST:
-						log.Printf("%s：命中黑名单消息：%s\n", filterName, onebotMessage.Partial.RawMessage)
+						debugf("%s：命中黑名单消息：%s\n", filterName, onebotMessage.Partial.RawMessage)
 						return &falseValue
 					}
 				} else if err != nil {
@@ -374,10 +347,10 @@ func (f *MessageTypeFilter) processFilterWithRule(filterName string, onebotMessa
 		if ok, err := pattern.MatchString(text); ok {
 			switch ruleMode {
 			case WHITELIST:
-				log.Printf("%s：命中白名单消息：%s\n", filterName, onebotMessage.Partial.RawMessage)
+				debugf("%s：命中白名单消息：%s\n", filterName, onebotMessage.Partial.RawMessage)
 				return &trueValue
 			case BLACKLIST:
-				log.Printf("%s：命中黑名单消息：%s\n", filterName, onebotMessage.Partial.RawMessage)
+				debugf("%s：命中黑名单消息：%s\n", filterName, onebotMessage.Partial.RawMessage)
 				return &falseValue
 			}
 		} else if err != nil {
@@ -491,7 +464,7 @@ func isGloballyBlocked(onebotMessage *core.OneBotMessage) bool {
 		return false
 	}
 
-	userID := getMessageUserID(onebotMessage)
+	userID := core.GetMessageUserID(onebotMessage)
 	groupID := onebotMessage.Partial.GroupID
 
 	if userID > 0 && slices.Contains(core.CONFIG.Server.Blocked.UserIDs, userID) {

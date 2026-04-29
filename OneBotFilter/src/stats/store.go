@@ -58,6 +58,15 @@ type BotSendRank struct {
 	SendCount int64
 }
 
+type SessionTraffic struct {
+	SessionType        string
+	SessionID          int64
+	RecvCount          int64
+	SendCount          int64
+	BotSendCount       int64
+	InternalSendCount  int64
+}
+
 type Store struct {
 	db *sql.DB
 }
@@ -316,6 +325,86 @@ ORDER BY total_count DESC, bot_name ASC`, where),
 			return nil, err
 		}
 		result = append(result, rank)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) QueryGlobalSummary(r DateRange) (SessionSummary, error) {
+	if r.Mode == ModeAll || (r.StartDate == "" && r.EndDate == "") {
+		row := s.db.QueryRow(
+			`SELECT
+				COALESCE(SUM(recv_count), 0),
+				COALESCE(SUM(send_count), 0),
+				COALESCE(SUM(bot_send_count), 0),
+				COALESCE(SUM(internal_send_count), 0)
+			FROM stats_daily_session`,
+		)
+		var summary SessionSummary
+		err := row.Scan(&summary.RecvCount, &summary.SendCount, &summary.BotSendCount, &summary.InternalSendCount)
+		return summary, err
+	}
+
+	row := s.db.QueryRow(
+		`SELECT
+			COALESCE(SUM(recv_count), 0),
+			COALESCE(SUM(send_count), 0),
+			COALESCE(SUM(bot_send_count), 0),
+			COALESCE(SUM(internal_send_count), 0)
+		FROM stats_daily_session
+		WHERE stat_date BETWEEN ? AND ?`,
+		r.StartDate,
+		r.EndDate,
+	)
+	var summary SessionSummary
+	err := row.Scan(&summary.RecvCount, &summary.SendCount, &summary.BotSendCount, &summary.InternalSendCount)
+	return summary, err
+}
+
+func (s *Store) QuerySessionTraffic(r DateRange) ([]SessionTraffic, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+
+	query := `SELECT
+			session_type,
+			session_id,
+			COALESCE(SUM(recv_count), 0),
+			COALESCE(SUM(send_count), 0),
+			COALESCE(SUM(bot_send_count), 0),
+			COALESCE(SUM(internal_send_count), 0)
+		FROM stats_daily_session`
+	if r.Mode == ModeAll || (r.StartDate == "" && r.EndDate == "") {
+		rows, err = s.db.Query(query + `
+		GROUP BY session_type, session_id
+		ORDER BY (SUM(recv_count) + SUM(send_count)) DESC, session_type ASC, session_id ASC`)
+	} else {
+		rows, err = s.db.Query(query+`
+		WHERE stat_date BETWEEN ? AND ?
+		GROUP BY session_type, session_id
+		ORDER BY (SUM(recv_count) + SUM(send_count)) DESC, session_type ASC, session_id ASC`,
+			r.StartDate, r.EndDate,
+		)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []SessionTraffic
+	for rows.Next() {
+		var row SessionTraffic
+		if err := rows.Scan(
+			&row.SessionType,
+			&row.SessionID,
+			&row.RecvCount,
+			&row.SendCount,
+			&row.BotSendCount,
+			&row.InternalSendCount,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
 	}
 	return result, rows.Err()
 }

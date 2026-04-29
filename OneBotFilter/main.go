@@ -229,6 +229,13 @@ func main() {
 	}
 
 	paths := core.DefaultPaths(root)
+	restoreLogging, err := core.SetupRuntimeLogging(paths.LogFile)
+	if err != nil {
+		log.Fatal("初始化运行日志失败:", err)
+	}
+	defer func() {
+		_ = restoreLogging()
+	}()
 	if err := os.MkdirAll(filepath.Dir(paths.HelpImage), 0o755); err != nil {
 		log.Fatal("创建 data/help 目录失败:", err)
 	}

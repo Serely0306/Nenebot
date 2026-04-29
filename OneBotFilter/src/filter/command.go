@@ -2,7 +2,6 @@ package filter
 
 import (
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 
@@ -36,14 +35,12 @@ func (m *Module) TryHandle(onebotMessage *core.OneBotMessage) (bool, map[string]
 	}
 
 	if cmd.RequiresAuth && !canExecuteControlCommand(onebotMessage, cmd) {
-		if core.CONFIG.Server.Debug {
-			log.Printf("命令因权限不足被忽略：group=%d user=%d role=%s raw=%s\n",
-				onebotMessage.Partial.GroupID,
-				onebotMessage.Partial.Sender.UserID,
-				onebotMessage.Partial.Sender.Role,
-				onebotMessage.Partial.RawMessage,
-			)
-		}
+		debugf("命令因权限不足被忽略：group=%d user=%d role=%s raw=%s\n",
+			onebotMessage.Partial.GroupID,
+			onebotMessage.Partial.Sender.UserID,
+			onebotMessage.Partial.Sender.Role,
+			onebotMessage.Partial.RawMessage,
+		)
 		return true, nil
 	}
 
@@ -283,7 +280,7 @@ func parseNumericID(raw string) (int64, bool) {
 
 func canExecuteControlCommand(onebotMessage *core.OneBotMessage, cmd *controlCommand) bool {
 	auth := core.CONFIG.Server.CommandAuth
-	userID := getMessageUserID(onebotMessage)
+	userID := core.GetMessageUserID(onebotMessage)
 
 	if cmd != nil && cmd.SuperUserOnly {
 		return auth.IsSuperUser(userID)
@@ -446,14 +443,4 @@ func slicesContains(values []int64, target int64) bool {
 		}
 	}
 	return false
-}
-
-func getMessageUserID(onebotMessage *core.OneBotMessage) int64 {
-	if onebotMessage == nil {
-		return 0
-	}
-	if onebotMessage.Partial.Sender.UserID > 0 {
-		return onebotMessage.Partial.Sender.UserID
-	}
-	return onebotMessage.Partial.UserID
 }

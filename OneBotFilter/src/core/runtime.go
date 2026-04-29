@@ -320,6 +320,88 @@ func (wss *WsServer) logDebugMessage(msgData []byte) {
 	}
 }
 
+func logDebugBotAppMessage(botName string, msgType int, msgData []byte) {
+	if !CONFIG.Server.Debug {
+		return
+	}
+	if !shouldLogBotAppMessage(msgType, msgData) {
+		return
+	}
+	log.Printf("[BotApp %s] %s\n", botName, summarizeBotAppPayload(msgType, msgData))
+}
+
+func shouldLogBotAppMessage(msgType int, msgData []byte) bool {
+	if msgType != websocket.TextMessage {
+		return false
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(msgData, &payload); err != nil {
+		return true
+	}
+	action, _ := payload["action"].(string)
+	action = strings.TrimSpace(action)
+	return strings.HasPrefix(strings.ToLower(action), "send")
+}
+
+func summarizeBotAppPayload(msgType int, msgData []byte) string {
+	if msgType != websocket.TextMessage {
+		return fmt.Sprintf("ws_type=%d bytes=%d", msgType, len(msgData))
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(msgData, &payload); err != nil {
+		return fmt.Sprintf("raw=%s", truncateForLog(string(msgData), 240))
+	}
+
+	action, _ := payload["action"].(string)
+	params, _ := payload["params"].(map[string]interface{})
+	if action == "" || params == nil {
+		echo, _ := payload["echo"].(string)
+		if echo != "" {
+			return fmt.Sprintf("api_resp echo=%s retcode=%v", echo, payload["retcode"])
+		}
+		return fmt.Sprintf("payload=%s", truncateForLog(string(msgData), 240))
+	}
+
+	sessionType := "unknown"
+	sessionID := int64(0)
+	switch action {
+	case "send_group_msg", "send_group_forward_msg":
+		sessionType = "group"
+		sessionID = toInt64(params["group_id"])
+	case "send_private_msg", "send_private_forward_msg":
+		sessionType = "private"
+		sessionID = toInt64(params["user_id"])
+	case "send_msg":
+		if toInt64(params["group_id"]) > 0 || strings.TrimSpace(fmt.Sprintf("%v", params["message_type"])) == "group" {
+			sessionType = "group"
+			sessionID = toInt64(params["group_id"])
+		} else {
+			sessionType = "private"
+			sessionID = toInt64(params["user_id"])
+		}
+	default:
+		sessionType = "unknown"
+	}
+
+	return fmt.Sprintf(
+		"action=%s session=%s(%d) bytes=%d",
+		action,
+		sessionType,
+		sessionID,
+		len(msgData),
+	)
+}
+
+func truncateForLog(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if len(text) <= limit || limit <= 0 {
+		return text
+	}
+	return text[:limit] + "..."
+}
+
 func (wss *WsServer) writeLoop(ctx context.Context, writeChan chan WsMsg) {
 	for {
 		select {
@@ -582,6 +664,7 @@ func (wc *WsClient) readLoop(ctx context.Context, wss *WsServer) {
 			if !ok {
 				return
 			}
+			logDebugBotAppMessage(wc.Name, msg.MsgType, msg.MsgData)
 			for _, hook := range wss.botActionHooks {
 				hook(wc.Name, msg.MsgType, msg.MsgData)
 			}

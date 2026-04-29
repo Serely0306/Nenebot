@@ -6,9 +6,10 @@ require (
 	github.com/dlclark/regexp2 v1.10.0
 	github.com/fogleman/gg v1.3.0
 	github.com/fsnotify/fsnotify v1.6.0
+	github.com/gogpu/gg v0.32.4
 	github.com/gorilla/websocket v1.5.0
 	github.com/spf13/viper v1.16.0
-	golang.org/x/image v0.0.0-20190802002840-cff245a6509b
+	golang.org/x/image v0.39.0
 	modernc.org/sqlite v1.36.0
 )
 
@@ -36,7 +37,7 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/subosito/gotenv v1.4.2 // indirect
 	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/text v0.9.0 // indirect
+	golang.org/x/text v0.36.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1
 )
