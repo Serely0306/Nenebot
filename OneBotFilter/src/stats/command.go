@@ -199,6 +199,25 @@ func (m *Module) TryHandle(msg *core.OneBotMessage) (bool, map[string]interface{
 	}
 }
 
+func (m *Module) CanHandle(msg *core.OneBotMessage) bool {
+	text := extractCommandText(msg)
+	switch {
+	case text == "/总发言榜":
+		return true
+	case text == "/发言榜" || text == "/今日发言榜" || strings.HasPrefix(text, "/发言榜 "):
+		return true
+	case text == "/stats" || strings.HasPrefix(text, "/stats "):
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Module) Handle(msg *core.OneBotMessage) map[string]interface{} {
+	_, response := m.TryHandle(msg)
+	return response
+}
+
 func (m *Module) handleRank(msg *core.OneBotMessage, r DateRange) map[string]interface{} {
 	sessionType, sessionID := sessionFromMessage(msg)
 	summary, err := m.store.QuerySessionSummary(sessionType, sessionID, r)

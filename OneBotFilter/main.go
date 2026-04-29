@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -167,10 +168,214 @@ func handleLocal(w http.ResponseWriter, r *http.Request) {
 }
 
 type oneBotNameResolver struct {
-	server *core.WsServer
+	server          *core.WsServer
+	mu              sync.RWMutex
+	groupNames      map[groupMemberKey]cachedName
+	privateNames    map[int64]cachedName
+	groupRefreshing map[groupMemberKey]struct{}
+	privateLoading  map[int64]struct{}
 }
 
-func (r oneBotNameResolver) ResolveGroupMemberName(groupID, userID int64) (string, error) {
+type groupMemberKey struct {
+	GroupID int64
+	UserID  int64
+}
+
+type cachedName struct {
+	Value     string
+	UpdatedAt time.Time
+}
+
+const nameCacheTTL = 6 * time.Hour
+
+func newOneBotNameResolver(server *core.WsServer) *oneBotNameResolver {
+	return &oneBotNameResolver{
+		server:          server,
+		groupNames:      make(map[groupMemberKey]cachedName),
+		privateNames:    make(map[int64]cachedName),
+		groupRefreshing: make(map[groupMemberKey]struct{}),
+		privateLoading:  make(map[int64]struct{}),
+	}
+}
+
+func (r *oneBotNameResolver) ResolveGroupMemberName(groupID, userID int64) (string, error) {
+	if r == nil {
+		return "", fmt.Errorf("resolver 未初始化")
+	}
+	key := groupMemberKey{GroupID: groupID, UserID: userID}
+	if name, fresh := r.lookupGroupName(key); strings.TrimSpace(name) != "" {
+		if !fresh {
+			r.refreshGroupMemberNameAsync(key)
+		}
+		return name, nil
+	}
+	if name, fresh := r.lookupPrivateName(userID); strings.TrimSpace(name) != "" {
+		r.refreshGroupMemberNameAsync(key)
+		if !fresh {
+			r.refreshPrivateNameAsync(userID)
+		}
+		return name, nil
+	}
+	r.refreshGroupMemberNameAsync(key)
+	return "", fmt.Errorf("群成员昵称缓存未命中")
+}
+
+func (r *oneBotNameResolver) ResolvePrivateName(userID int64) (string, error) {
+	if r == nil {
+		return "", fmt.Errorf("resolver 未初始化")
+	}
+	if name, fresh := r.lookupPrivateName(userID); strings.TrimSpace(name) != "" {
+		if !fresh {
+			r.refreshPrivateNameAsync(userID)
+		}
+		return name, nil
+	}
+	r.refreshPrivateNameAsync(userID)
+	return "", fmt.Errorf("私聊昵称缓存未命中")
+}
+
+func (r *oneBotNameResolver) ObserveMessage(msg *core.OneBotMessage) {
+	if r == nil || msg == nil {
+		return
+	}
+	userID := core.GetMessageUserID(msg)
+	if userID <= 0 {
+		return
+	}
+
+	card := strings.TrimSpace(msg.Partial.Sender.Card)
+	nickname := strings.TrimSpace(msg.Partial.Sender.Nickname)
+	switch msg.Partial.MessageType {
+	case "group":
+		if msg.Partial.GroupID > 0 {
+			if card != "" {
+				r.storeGroupName(groupMemberKey{GroupID: msg.Partial.GroupID, UserID: userID}, card)
+			} else if nickname != "" {
+				r.storeGroupName(groupMemberKey{GroupID: msg.Partial.GroupID, UserID: userID}, nickname)
+			}
+		}
+		if nickname != "" {
+			r.storePrivateName(userID, nickname)
+		}
+	case "private":
+		if nickname != "" {
+			r.storePrivateName(userID, nickname)
+		}
+	}
+}
+
+func (r *oneBotNameResolver) lookupGroupName(key groupMemberKey) (string, bool) {
+	r.mu.RLock()
+	entry, ok := r.groupNames[key]
+	r.mu.RUnlock()
+	if !ok || strings.TrimSpace(entry.Value) == "" {
+		return "", false
+	}
+	return entry.Value, time.Since(entry.UpdatedAt) <= nameCacheTTL
+}
+
+func (r *oneBotNameResolver) lookupPrivateName(userID int64) (string, bool) {
+	r.mu.RLock()
+	entry, ok := r.privateNames[userID]
+	r.mu.RUnlock()
+	if !ok || strings.TrimSpace(entry.Value) == "" {
+		return "", false
+	}
+	return entry.Value, time.Since(entry.UpdatedAt) <= nameCacheTTL
+}
+
+func (r *oneBotNameResolver) storeGroupName(key groupMemberKey, name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	r.mu.Lock()
+	r.groupNames[key] = cachedName{Value: name, UpdatedAt: time.Now()}
+	r.mu.Unlock()
+}
+
+func (r *oneBotNameResolver) storePrivateName(userID int64, name string) {
+	name = strings.TrimSpace(name)
+	if userID <= 0 || name == "" {
+		return
+	}
+	r.mu.Lock()
+	r.privateNames[userID] = cachedName{Value: name, UpdatedAt: time.Now()}
+	r.mu.Unlock()
+}
+
+func (r *oneBotNameResolver) refreshGroupMemberNameAsync(key groupMemberKey) {
+	if r == nil || r.server == nil || r.server.Conn == nil || key.GroupID <= 0 || key.UserID <= 0 {
+		return
+	}
+	r.mu.Lock()
+	if _, ok := r.groupRefreshing[key]; ok {
+		r.mu.Unlock()
+		return
+	}
+	r.groupRefreshing[key] = struct{}{}
+	r.mu.Unlock()
+
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			delete(r.groupRefreshing, key)
+			r.mu.Unlock()
+		}()
+		resp, err := r.server.CallAPI("get_group_member_info", map[string]interface{}{
+			"group_id": key.GroupID,
+			"user_id":  key.UserID,
+			"no_cache": true,
+		}, 3*time.Second)
+		if err != nil {
+			return
+		}
+		data, _ := resp["data"].(map[string]interface{})
+		card, _ := data["card"].(string)
+		nickname, _ := data["nickname"].(string)
+		if strings.TrimSpace(card) != "" {
+			r.storeGroupName(key, card)
+		} else if strings.TrimSpace(nickname) != "" {
+			r.storeGroupName(key, nickname)
+		}
+		if strings.TrimSpace(nickname) != "" {
+			r.storePrivateName(key.UserID, nickname)
+		}
+	}()
+}
+
+func (r *oneBotNameResolver) refreshPrivateNameAsync(userID int64) {
+	if r == nil || r.server == nil || r.server.Conn == nil || userID <= 0 {
+		return
+	}
+	r.mu.Lock()
+	if _, ok := r.privateLoading[userID]; ok {
+		r.mu.Unlock()
+		return
+	}
+	r.privateLoading[userID] = struct{}{}
+	r.mu.Unlock()
+
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			delete(r.privateLoading, userID)
+			r.mu.Unlock()
+		}()
+		resp, err := r.server.CallAPI("get_stranger_info", map[string]interface{}{
+			"user_id":  userID,
+			"no_cache": true,
+		}, 3*time.Second)
+		if err != nil {
+			return
+		}
+		data, _ := resp["data"].(map[string]interface{})
+		nickname, _ := data["nickname"].(string)
+		r.storePrivateName(userID, nickname)
+	}()
+}
+
+func (r *oneBotNameResolver) ResolveGroupMemberNameSync(groupID, userID int64) (string, error) {
 	if r.server == nil || r.server.Conn == nil {
 		return "", fmt.Errorf("onebot 未连接")
 	}
@@ -192,7 +397,7 @@ func (r oneBotNameResolver) ResolveGroupMemberName(groupID, userID int64) (strin
 	return strings.TrimSpace(nickname), nil
 }
 
-func (r oneBotNameResolver) ResolvePrivateName(userID int64) (string, error) {
+func (r *oneBotNameResolver) ResolvePrivateNameSync(userID int64) (string, error) {
 	if r.server == nil || r.server.Conn == nil {
 		return "", fmt.Errorf("onebot 未连接")
 	}
@@ -271,7 +476,8 @@ func main() {
 		log.Fatal("打开统计数据库异常:", err)
 	}
 	defer statsStore.Close()
-	statsModule := statsmod.NewModule(statsCfg, statsStore, oneBotNameResolver{server: wss}, core.IsSuperUser, paths.FontFile)
+	nameResolver := newOneBotNameResolver(wss)
+	statsModule := statsmod.NewModule(statsCfg, statsStore, nameResolver, core.IsSuperUser, paths.FontFile)
 	statsModule.Start()
 	defer statsModule.Stop()
 
@@ -284,12 +490,24 @@ func main() {
 			log.Printf("重新加载过滤器失败: %v\n", err)
 		}
 	})
-	wss.SetExternalCommandHandlers(
-		helpModule.TryHandle,
-		statsModule.TryHandle,
-		filterModule.TryHandle,
+	wss.SetExternalCommandRoutes(
+		core.ExternalCommandRoute{
+			Name:    "help",
+			Match:   helpModule.CanHandle,
+			Execute: helpModule.Handle,
+		},
+		core.ExternalCommandRoute{
+			Name:    "stats",
+			Match:   statsModule.CanHandle,
+			Execute: statsModule.Handle,
+		},
+		core.ExternalCommandRoute{
+			Name:    "filter",
+			Match:   filterModule.CanHandle,
+			Execute: filterModule.Handle,
+		},
 	)
-	wss.SetUpstreamEventHooks(statsModule.HandleUpstreamEvent)
+	wss.SetUpstreamEventHooks(nameResolver.ObserveMessage, statsModule.HandleUpstreamEvent)
 	wss.SetBotActionHooks(statsModule.HandleBotAction)
 	wss.SetInternalSendHooks(statsModule.HandleInternalSend)
 

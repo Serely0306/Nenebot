@@ -60,6 +60,16 @@ func (m *Module) TryHandle(onebotMessage *core.OneBotMessage) (bool, map[string]
 	}
 }
 
+func (m *Module) CanHandle(onebotMessage *core.OneBotMessage) bool {
+	_, ok := parseControlCommand(onebotMessage)
+	return ok
+}
+
+func (m *Module) Handle(onebotMessage *core.OneBotMessage) map[string]interface{} {
+	_, response := m.TryHandle(onebotMessage)
+	return response
+}
+
 func extractMessageText(onebotMessage *core.OneBotMessage) string {
 	switch onebotMessage.Partial.MessageFormat {
 	case MESSAGE_FORMAT_ARRAY:

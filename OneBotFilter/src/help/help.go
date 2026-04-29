@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"onebotfilter/src/core"
 	"gopkg.in/yaml.v3"
+	"onebotfilter/src/core"
 )
 
 type Link struct {
@@ -103,6 +103,20 @@ func (m *Module) TryHandle(msg *core.OneBotMessage) (bool, map[string]any) {
 	default:
 		return false, nil
 	}
+}
+
+func (m *Module) CanHandle(msg *core.OneBotMessage) bool {
+	switch extractMessageText(msg) {
+	case "help", "/help", "帮助", "/帮助":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Module) Handle(msg *core.OneBotMessage) map[string]any {
+	_, response := m.TryHandle(msg)
+	return response
 }
 
 func (m *Module) BuildUnifiedHelpMessage() ([]map[string]any, bool, error) {

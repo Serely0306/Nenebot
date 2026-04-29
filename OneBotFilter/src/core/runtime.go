@@ -37,9 +37,22 @@ type MessageFilter interface {
 }
 
 type ExternalCommandHandler func(*OneBotMessage) (bool, map[string]interface{})
+type ExternalCommandMatcher func(*OneBotMessage) bool
+type ExternalCommandExecutor func(*OneBotMessage) map[string]interface{}
 type UpstreamEventHook func(*OneBotMessage)
 type BotActionHook func(string, int, []byte)
 type InternalSendHook func(map[string]interface{})
+
+type ExternalCommandRoute struct {
+	Name    string
+	Match   ExternalCommandMatcher
+	Execute ExternalCommandExecutor
+}
+
+type externalCommandTask struct {
+	route ExternalCommandRoute
+	msg   *OneBotMessage
+}
 
 type WsServer struct {
 	Conn         *websocket.Conn
@@ -47,11 +60,13 @@ type WsServer struct {
 	BotID        string
 	readChan     chan WsMsg
 	writeChan    chan WsMsg
+	commandQueue chan externalCommandTask
 	apiWaiters   map[string]chan map[string]interface{}
 	apiWaitersMu sync.Mutex
 	echoSeq      uint64
 
 	externalCommandHandlers []ExternalCommandHandler
+	externalCommandRoutes   []ExternalCommandRoute
 	upstreamEventHooks      []UpstreamEventHook
 	botActionHooks          []BotActionHook
 	internalSendHooks       []InternalSendHook
@@ -69,6 +84,10 @@ type WsClient struct {
 
 func (wss *WsServer) SetExternalCommandHandlers(handlers ...ExternalCommandHandler) {
 	wss.externalCommandHandlers = append([]ExternalCommandHandler(nil), handlers...)
+}
+
+func (wss *WsServer) SetExternalCommandRoutes(routes ...ExternalCommandRoute) {
+	wss.externalCommandRoutes = append([]ExternalCommandRoute(nil), routes...)
 }
 
 func (wss *WsServer) SetUpstreamEventHooks(hooks ...UpstreamEventHook) {
@@ -170,6 +189,7 @@ func (wss *WsServer) WsServerHandler() error {
 	wss.readChan = readChan
 	wss.writeChan = writeChan
 	wss.apiWaiters = make(map[string]chan map[string]interface{})
+	wss.initCommandDispatcher(ctx)
 
 	go wss.readLoop(ctx, readChan)
 	go wss.writeLoop(ctx, writeChan)
@@ -216,6 +236,7 @@ func (wss *WsServer) close(cancel context.CancelFunc, readChan chan WsMsg, write
 	cancel()
 	conn := wss.Conn
 	wss.Conn = nil
+	wss.commandQueue = nil
 	if conn != nil {
 		conn.Close()
 	}
@@ -224,6 +245,7 @@ func (wss *WsServer) close(cancel context.CancelFunc, readChan chan WsMsg, write
 }
 
 func (wss *WsServer) readLoop(ctx context.Context, readChan chan WsMsg) {
+	wss.initCommandDispatcher(ctx)
 	for {
 		select {
 		case msg, ok := <-readChan:
@@ -242,6 +264,9 @@ func (wss *WsServer) readLoop(ctx context.Context, readChan chan WsMsg) {
 					logInfoIncomingMessage(onebotMessage)
 					for i, hook := range wss.upstreamEventHooks {
 						callUpstreamEventHook(i, hook, onebotMessage)
+					}
+					if wss.enqueueMatchedCommand(onebotMessage) {
+						continue
 					}
 				}
 				for i, handler := range wss.externalCommandHandlers {
@@ -494,6 +519,76 @@ func logInfoOutgoingAction(source string, payload map[string]interface{}) {
 	log.Printf("[Send][%s][private:%d] %s\n", source, sessionID, preview)
 }
 
+func (wss *WsServer) initCommandDispatcher(ctx context.Context) {
+	if len(wss.externalCommandRoutes) == 0 || wss.commandQueue != nil {
+		return
+	}
+	queue := make(chan externalCommandTask, 128)
+	wss.commandQueue = queue
+	go wss.commandWorker(ctx, queue)
+}
+
+func (wss *WsServer) commandWorker(ctx context.Context, queue chan externalCommandTask) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case task := <-queue:
+			response := callExternalCommandExecutor(task.route, task.msg)
+			if response == nil {
+				continue
+			}
+			if err := wss.SendCommandResponse(response); err != nil {
+				log.Printf("发送命令响应失败：route=%s err=%v\n", task.route.Name, err)
+			}
+		}
+	}
+}
+
+func (wss *WsServer) enqueueMatchedCommand(msg *OneBotMessage) bool {
+	if msg == nil || len(wss.externalCommandRoutes) == 0 {
+		return false
+	}
+	for _, route := range wss.externalCommandRoutes {
+		if !callExternalCommandMatcher(route, msg) {
+			continue
+		}
+		if wss.commandQueue == nil {
+			response := callExternalCommandExecutor(route, msg)
+			if response != nil {
+				if err := wss.SendCommandResponse(response); err != nil {
+					log.Printf("发送命令响应失败：route=%s err=%v\n", route.Name, err)
+				}
+			}
+			return true
+		}
+		select {
+		case wss.commandQueue <- externalCommandTask{route: route, msg: msg}:
+			return true
+		default:
+			log.Printf("命令队列已满，丢弃命令：route=%s raw=%s\n", route.Name, truncateForLog(msg.Partial.RawMessage, 120))
+			response := buildBusyReply(msg, "命令处理繁忙，请稍后重试")
+			if err := wss.SendCommandResponse(response); err != nil {
+				log.Printf("发送繁忙提示失败：route=%s err=%v\n", route.Name, err)
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func buildBusyReply(msg *OneBotMessage, text string) map[string]interface{} {
+	params := map[string]interface{}{"message": text}
+	if msg != nil && msg.Partial.MessageType == "group" {
+		params["group_id"] = msg.Partial.GroupID
+		return map[string]interface{}{"action": "send_group_msg", "params": params}
+	}
+	if msg != nil {
+		params["user_id"] = GetMessageUserID(msg)
+	}
+	return map[string]interface{}{"action": "send_private_msg", "params": params}
+}
+
 func logPluginPanic(kind string, index int, detail string, recovered interface{}) {
 	name := fmt.Sprintf("%s#%d", kind, index)
 	if strings.TrimSpace(detail) != "" {
@@ -511,6 +606,32 @@ func callExternalCommandHandler(index int, handler ExternalCommandHandler, msg *
 		}
 	}()
 	return handler(msg)
+}
+
+func callExternalCommandMatcher(route ExternalCommandRoute, msg *OneBotMessage) (matched bool) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			matched = false
+			logPluginPanic("command-match", 0, route.Name, recovered)
+		}
+	}()
+	if route.Match == nil {
+		return false
+	}
+	return route.Match(msg)
+}
+
+func callExternalCommandExecutor(route ExternalCommandRoute, msg *OneBotMessage) (response map[string]interface{}) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			response = nil
+			logPluginPanic("command-exec", 0, route.Name, recovered)
+		}
+	}()
+	if route.Execute == nil {
+		return nil
+	}
+	return route.Execute(msg)
 }
 
 func callUpstreamEventHook(index int, hook UpstreamEventHook, msg *OneBotMessage) {
