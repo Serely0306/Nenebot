@@ -1,5 +1,4 @@
-// Package console sets console's behavior on init
-package console
+package abineundo
 
 import (
 	"bytes"
@@ -39,17 +38,21 @@ func setConsoleTitle(title string) (err error) {
 
 func init() {
 	debugMode := os.Getenv("DEBUG_MODE") == "1"
+	fallback := func(format string, args ...any) {
+		logrus.SetFormatter(&logFormat{hasColor: false})
+		logrus.Warnf(format, args...)
+	}
 	stdin := windows.Handle(os.Stdin.Fd())
 
 	var mode uint32
 	err := windows.GetConsoleMode(stdin, &mode)
 	if err != nil {
 		if debugMode {
-			logrus.Warnf("调试模式下忽略控制台模式获取失败: %v", err)
+			fallback("调试模式下忽略控制台模式获取失败: %v", err)
 			return // 调试模式下直接返回，跳过后续配置
-		} else {
-			panic(err) // 非调试模式下 panic
 		}
+		fallback("控制台模式获取失败，将跳过控制台增强: %v", err)
+		return
 	}
 
 	mode &^= windows.ENABLE_QUICK_EDIT_MODE // 禁用快速编辑模式
@@ -66,13 +69,23 @@ func init() {
 
 	err = windows.SetConsoleMode(stdin, mode)
 	if err != nil {
-		panic(err)
+		if debugMode {
+			fallback("调试模式下忽略控制台模式设置失败: %v", err)
+			return
+		}
+		fallback("控制台模式设置失败，将跳过控制台增强: %v", err)
+		return
 	}
 
 	stdout := windows.Handle(os.Stdout.Fd())
 	err = windows.GetConsoleMode(stdout, &mode)
 	if err != nil {
-		panic(err)
+		if debugMode {
+			fallback("调试模式下忽略控制台模式获取失败: %v", err)
+			return
+		}
+		fallback("控制台输出模式获取失败，将以无色模式输出: %v", err)
+		return
 	}
 
 	mode |= windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING // 启用虚拟终端处理
@@ -87,7 +100,11 @@ func init() {
 
 	err = setConsoleTitle("ZeroBot-Plugin " + banner.Version + " " + banner.Copyright)
 	if err != nil {
-		panic(err)
+		if debugMode {
+			fallback("调试模式下忽略控制台标题设置失败: %v", err)
+			return
+		}
+		logrus.Warnf("控制台标题设置失败，已跳过: %v", err)
 	}
 }
 

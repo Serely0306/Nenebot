@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/FloatTech/gg"
-	"github.com/FloatTech/imgfactory"
+	imgfactory "github.com/FloatTech/gg/factory"
 )
 
 // ==================== 星空渐变背景 ====================

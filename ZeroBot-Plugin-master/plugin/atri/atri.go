@@ -227,15 +227,15 @@ func init() { // 插件主体
 		Handle(func(ctx *zero.Ctx) {
 			ctx.SendChain(message.Reply(ctx.Event.MessageID), randText("不许好！", "憋回去！"))
 		})
-	// engine.OnFullMatchGroup([]string{"？", "?", "¿"}).SetBlock(true).
-	// 	Handle(func(ctx *zero.Ctx) {
-	// 		switch rand.Intn(5) {
-	// 		case 0:
-	// 			ctx.SendChain(randText("?", "？", "嗯？", "(。´・ω・)ん?", "ん？"))
-	// 		case 1, 2:
-	// 			ctx.SendChain(dgtr.randImage("WH.jpg", "WH1.jpg", "WH2.jpg", "WH3.jpg"))
-	// 		}
-	// 	})
+	engine.OnFullMatchGroup([]string{"？", "?", "¿"}).SetBlock(true).
+		Handle(func(ctx *zero.Ctx) {
+			switch rand.Intn(5) {
+			case 0:
+				ctx.SendChain(randText("?", "？", "嗯？", "(。´・ω・)ん?", "ん？"))
+			case 1, 2:
+				ctx.SendChain(dgtr.randImage("WH.jpg", "WH1.jpg", "WH2.jpg", "WH3.jpg"))
+			}
+		})
 	engine.OnKeyword("离谱").SetBlock(true).
 		Handle(func(ctx *zero.Ctx) {
 			switch rand.Intn(5) {

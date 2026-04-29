@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	fcext "github.com/FloatTech/floatbox/ctxext"
-	"github.com/FloatTech/imgfactory"
+	imgfactory "github.com/FloatTech/gg/factory"
 	sql "github.com/FloatTech/sqlite"
 	control "github.com/FloatTech/zbputils/control"
 	"github.com/FloatTech/zbputils/ctxext"

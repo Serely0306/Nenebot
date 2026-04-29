@@ -57,7 +57,6 @@ const (
 		"- 设置告别辞 参数同设置欢迎语\n" +
 		"- 测试告别辞\n" +
 		"- [开启 | 关闭]入群验证\n" +
-		"- [开启 | 关闭]退群提醒\n" +
 		"- 对信息回复: [设置 | 取消]精华\n" +
 		"- 取消精华 [信息ID]\n" +
 		"- /精华列表\n" +
@@ -68,13 +67,6 @@ var (
 	db    sql.Sqlite
 	clock timer.Clock
 )
-
-// farewellSwitch 退群提醒开关配置
-// farewellSwitch 退群提醒开关配置
-type farewellSwitch struct {
-	GID    int64 `sql:"gid,pk"` // 群ID，设置为主键
-	Enable int   `sql:"enable"` // 是否启用退群提醒: 0-关闭, 1-开启
-}
 
 func init() { // 插件主体
 	engine := control.AutoRegister(&ctrl.Options[*zero.Ctx]{
@@ -100,11 +92,6 @@ func init() { // 插件主体
 			panic(err)
 		}
 		err = db.Create("farewell", &welcome{})
-		if err != nil {
-			panic(err)
-		}
-		// 创建退群提醒开关表
-		err = db.Create("farewell_switch", &farewellSwitch{})
 		if err != nil {
 			panic(err)
 		}
@@ -514,18 +501,8 @@ func init() { // 插件主体
 	engine.OnNotice().SetBlock(false).
 		Handle(func(ctx *zero.Ctx) {
 			if ctx.Event.NoticeType == "group_decrease" {
-				// 检查退群提醒是否开启
-				var fs farewellSwitch
-				err := db.Find("farewell_switch", &fs, "WHERE gid = ?", ctx.Event.GroupID)
-				// 如果找不到记录，默认开启退群提醒
-				// 如果找到记录且enable=0，则关闭退群提醒
-				if err == nil && fs.Enable == 0 {
-					logrus.Debugf("[manager] 群聊 %d 的退群提醒已关闭", ctx.Event.GroupID)
-					return
-				}
-
 				var w welcome
-				err = db.Find("farewell", &w, "WHERE gid = ?", ctx.Event.GroupID)
+				err := db.Find("farewell", &w, "WHERE gid = ?", ctx.Event.GroupID)
 				if err == nil {
 					collectsend(ctx, message.ParseMessageFromString(welcometocq(ctx, w.Msg))...)
 				} else {
@@ -613,38 +590,6 @@ func init() { // 插件主体
 				return
 			}
 			ctx.SendChain(message.Text("找不到服务!"))
-		})
-		// 退群提醒开关
-		// 退群提醒开关
-	engine.OnRegex(`^(.*)退群提醒$`, zero.OnlyGroup, zero.AdminPermission).SetBlock(true).
-		Handle(func(ctx *zero.Ctx) {
-			option := ctx.State["regex_matched"].([]string)[1]
-			var enable int
-			switch option {
-			case "开启", "打开", "启用":
-				enable = 1
-			case "关闭", "关掉", "禁用":
-				enable = 0
-			default:
-				return
-			}
-
-			// 由于设置了主键，直接插入即可，重复的GID会自动更新
-			fs := farewellSwitch{
-				GID:    ctx.Event.GroupID,
-				Enable: enable,
-			}
-			err := db.Insert("farewell_switch", &fs)
-
-			if err == nil {
-				status := "开启"
-				if enable == 0 {
-					status = "关闭"
-				}
-				ctx.SendChain(message.Text("已" + option + "退群提醒，当前状态: " + status))
-			} else {
-				ctx.SendChain(message.Text("出错啦: ", err))
-			}
 		})
 	// 加群 gist 验证开关
 	engine.OnRegex(`^(.*)gist加群自动审批$`, zero.OnlyGroup, zero.AdminPermission).SetBlock(true).
@@ -743,7 +688,7 @@ func init() { // 插件主体
 				)
 			} else {
 				msg = append(msg,
-					message.CustomNode(info.Get("sender_nick").String(), info.Get("sender_id").Int(), "[error]信息久远，无法获取,如需查看原始内容请在\"精华信息\"中查看"),
+					message.CustomNode(info.Get("sender_nick").String(), info.Get("sender_id").Int(), "[error]信息久远，无法获取,如需查看原始内容请在“精华信息”中查看"),
 				)
 			}
 		}

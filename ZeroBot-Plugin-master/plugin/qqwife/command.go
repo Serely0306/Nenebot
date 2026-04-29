@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/FloatTech/floatbox/math"
-	"github.com/FloatTech/imgfactory"
+	imgfactory "github.com/FloatTech/gg/factory"
 	ctrl "github.com/FloatTech/zbpctrl"
 	control "github.com/FloatTech/zbputils/control"
 	"github.com/FloatTech/zbputils/ctxext"

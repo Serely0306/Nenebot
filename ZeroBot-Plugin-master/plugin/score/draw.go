@@ -14,7 +14,8 @@ import (
 	"github.com/FloatTech/AnimeAPI/wallet"
 	"github.com/FloatTech/floatbox/file"
 	"github.com/FloatTech/gg"
-	"github.com/FloatTech/imgfactory"
+	imgfactory "github.com/FloatTech/gg/factory"
+	"github.com/FloatTech/gg/fio"
 	"github.com/FloatTech/rendercard"
 	"github.com/FloatTech/zbputils/control"
 	"github.com/FloatTech/zbputils/img/text"
@@ -31,7 +32,7 @@ func drawScore16(a *scdata) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	back, err := gg.LoadImage(a.picfile)
+	back, err := fio.LoadImage(a.picfile)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +134,7 @@ func drawScore15(a *scdata) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	back, err := gg.LoadImage(a.picfile)
+	back, err := fio.LoadImage(a.picfile)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +188,7 @@ func drawScore17(a *scdata) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	back, err := gg.LoadImage(a.picfile)
+	back, err := fio.LoadImage(a.picfile)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +287,7 @@ func drawScore17b2(a *scdata) (img image.Image, err error) {
 	if err != nil {
 		return
 	}
-	back, err := gg.LoadImage(a.picfile)
+	back, err := fio.LoadImage(a.picfile)
 	if err != nil {
 		return
 	}
@@ -310,7 +311,7 @@ func drawScore17b2(a *scdata) (img image.Image, err error) {
 	scback.DrawImageAnchored(back, canvas.W()/2, canvas.H()/2, 0.5, 0.5)
 	scback.Identity()
 
-	colors = gg.TakeColor(scback.Image(), 3)
+	colors = gg.TakeThemeColorsKMeans(scback.Image(), 3)
 	go func() {
 		defer wg.Done()
 

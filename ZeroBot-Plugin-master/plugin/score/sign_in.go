@@ -17,7 +17,7 @@ import (
 	"github.com/FloatTech/floatbox/file"
 	"github.com/FloatTech/floatbox/process"
 	"github.com/FloatTech/floatbox/web"
-	"github.com/FloatTech/imgfactory"
+	imgfactory "github.com/FloatTech/gg/factory"
 	ctrl "github.com/FloatTech/zbpctrl"
 	"github.com/FloatTech/zbputils/control"
 	"github.com/FloatTech/zbputils/ctxext"
