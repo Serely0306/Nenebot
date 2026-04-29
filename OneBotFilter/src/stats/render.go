@@ -36,8 +36,9 @@ type RenderStatsInput struct {
 	Rows              []RankRow
 }
 
-func RenderRankImage(input RenderRankInput) ([]byte, error) {
+func RenderRankImage(fontPath string, input RenderRankInput) ([]byte, error) {
 	return renderCardImage(
+		fontPath,
 		input.Title,
 		input.SessionName,
 		input.RangeLabel,
@@ -46,12 +47,12 @@ func RenderRankImage(input RenderRankInput) ([]byte, error) {
 	)
 }
 
-func RenderStatsImage(input RenderStatsInput) ([]byte, error) {
+func RenderStatsImage(fontPath string, input RenderStatsInput) ([]byte, error) {
 	subtitle := fmt.Sprintf("接收 %d / 发送 %d / bot %d / 内部 %d", input.RecvCount, input.SendCount, input.BotSendCount, input.InternalSendCount)
-	return renderCardImage(input.Title, input.SessionName, input.RangeLabel, subtitle, input.Rows)
+	return renderCardImage(fontPath, input.Title, input.SessionName, input.RangeLabel, subtitle, input.Rows)
 }
 
-func renderCardImage(title, sessionName, rangeLabel, subtitle string, rows []RankRow) ([]byte, error) {
+func renderCardImage(fontPath, title, sessionName, rangeLabel, subtitle string, rows []RankRow) ([]byte, error) {
 	const (
 		width     = 1080
 		headerH   = 180
@@ -61,6 +62,14 @@ func renderCardImage(title, sessionName, rangeLabel, subtitle string, rows []Ran
 
 	height := headerH + padding + maxInt(1, len(rows))*rowHeight + padding
 	dc := gg.NewContext(width, height)
+	titleFace, err := gg.LoadFontFace(fontPath, 36)
+	if err != nil {
+		return nil, fmt.Errorf("加载统计标题字体失败: %w", err)
+	}
+	bodyFace, err := gg.LoadFontFace(fontPath, 20)
+	if err != nil {
+		return nil, fmt.Errorf("加载统计正文字体失败: %w", err)
+	}
 
 	bgTop := color.RGBA{18, 24, 43, 255}
 	bgBottom := color.RGBA{12, 39, 68, 255}
@@ -75,15 +84,13 @@ func renderCardImage(title, sessionName, rangeLabel, subtitle string, rows []Ran
 	}
 
 	dc.SetRGB255(245, 248, 255)
-	if err := dc.LoadFontFace("C:/Windows/Fonts/msyh.ttc", 36); err == nil {
-		dc.DrawStringAnchored(title, padding, 52, 0, 0.5)
-	}
-	if err := dc.LoadFontFace("C:/Windows/Fonts/msyh.ttc", 20); err == nil {
-		dc.SetRGB255(210, 220, 240)
-		dc.DrawStringAnchored(sessionName, padding, 96, 0, 0.5)
-		dc.DrawStringAnchored(rangeLabel, padding, 126, 0, 0.5)
-		dc.DrawStringAnchored(subtitle, padding, 156, 0, 0.5)
-	}
+	dc.SetFontFace(titleFace)
+	dc.DrawStringAnchored(title, padding, 52, 0, 0.5)
+	dc.SetFontFace(bodyFace)
+	dc.SetRGB255(210, 220, 240)
+	dc.DrawStringAnchored(sessionName, padding, 96, 0, 0.5)
+	dc.DrawStringAnchored(rangeLabel, padding, 126, 0, 0.5)
+	dc.DrawStringAnchored(subtitle, padding, 156, 0, 0.5)
 
 	startY := float64(headerH)
 	barX := float64(280)
@@ -95,14 +102,13 @@ func renderCardImage(title, sessionName, rangeLabel, subtitle string, rows []Ran
 		dc.DrawRoundedRectangle(float64(padding), top, float64(width-padding*2), rowHeight-12, 12)
 		dc.Fill()
 
-		if err := dc.LoadFontFace("C:/Windows/Fonts/msyh.ttc", 20); err == nil {
-			dc.SetRGB255(255, 255, 255)
-			dc.DrawStringAnchored(fmt.Sprintf("#%d", row.Index), float64(padding+24), top+30, 0.5, 0.5)
-			dc.DrawStringAnchored(row.Name, float64(padding+90), top+30, 0, 0.5)
-			dc.SetRGB255(205, 216, 238)
-			dc.DrawStringAnchored(fmt.Sprintf("%d", row.Count), float64(width-180), top+30, 1, 0.5)
-			dc.DrawStringAnchored(fmt.Sprintf("%.1f%%", row.Percent), float64(width-80), top+30, 1, 0.5)
-		}
+		dc.SetFontFace(bodyFace)
+		dc.SetRGB255(255, 255, 255)
+		dc.DrawStringAnchored(fmt.Sprintf("#%d", row.Index), float64(padding+24), top+30, 0.5, 0.5)
+		dc.DrawStringAnchored(row.Name, float64(padding+90), top+30, 0, 0.5)
+		dc.SetRGB255(205, 216, 238)
+		dc.DrawStringAnchored(fmt.Sprintf("%d", row.Count), float64(width-180), top+30, 1, 0.5)
+		dc.DrawStringAnchored(fmt.Sprintf("%.1f%%", row.Percent), float64(width-80), top+30, 1, 0.5)
 
 		progress := math.Max(0, math.Min(1, row.Percent/100))
 		dc.SetRGBA255(120, 166, 255, 180)

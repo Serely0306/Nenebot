@@ -211,7 +211,7 @@ func (m *Module) handleRank(msg *core.OneBotMessage, r DateRange) map[string]int
 		})
 	}
 
-	imageBytes, err := RenderRankImage(RenderRankInput{
+	imageBytes, err := RenderRankImage(m.fontPath, RenderRankInput{
 		Title:       rankTitle(r),
 		SessionName: sessionLabel(msg),
 		RangeLabel:  rangeLabel(r),
@@ -272,7 +272,7 @@ func (m *Module) handleStats(msg *core.OneBotMessage, botName string, r DateRang
 		})
 	}
 
-	imageBytes, err := RenderStatsImage(RenderStatsInput{
+	imageBytes, err := RenderStatsImage(m.fontPath, RenderStatsInput{
 		Title:             statsTitle(r, botName),
 		SessionName:       sessionLabel(msg),
 		RangeLabel:        rangeLabel(r),

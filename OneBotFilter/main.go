@@ -112,7 +112,7 @@ func handleLocal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	selfID := strings.TrimSpace(r.Header.Get("X-Self-ID"))
+	selfID := core.NormalizeBotID(r.Header.Get("X-Self-ID"))
 	if configBotId != "" && selfID != "" && selfID != configBotId {
 		log.Printf("拒绝连接：X-Self-ID (%s) 与配置的 bot-id (%s) 不匹配\n", selfID, configBotId)
 		http.Error(w, "Bot ID不匹配", http.StatusForbidden)
@@ -151,11 +151,11 @@ func handleLocal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if newBotID != "" {
-	if wss.BotID != "" && wss.BotID != newBotID {
-		log.Printf("检测到 Bot ID 变更 (%s -> %s)，正在重置所有连接...\n", wss.BotID, newBotID)
-		wss.DisconnectAllClients()
-	}
-	wss.BotID = newBotID
+		if wss.BotID != "" && wss.BotID != newBotID {
+			log.Printf("检测到 Bot ID 变更 (%s -> %s)，正在重置所有连接...\n", wss.BotID, newBotID)
+			wss.DisconnectAllClients()
+		}
+		wss.BotID = newBotID
 	}
 
 	log.Println("已连接到 OneBot 客户端")
@@ -248,7 +248,7 @@ func main() {
 		Enabled:         true,
 		GenerateImage:   core.CONFIG.Server.Help.Generate,
 		ForwardNickname: core.CONFIG.Server.Help.ForwardNickname,
-		BotID:           strings.TrimSpace(core.CONFIG.Server.BotID),
+		BotID:           core.NormalizeBotID(core.CONFIG.Server.BotID),
 	}
 	helpModule, err := helpmod.Load(paths.HelpConfig, paths, helpSettings)
 	if err != nil {
@@ -264,7 +264,7 @@ func main() {
 		log.Fatal("打开统计数据库异常:", err)
 	}
 	defer statsStore.Close()
-	statsModule := statsmod.NewModule(statsCfg, statsStore, oneBotNameResolver{server: wss}, core.IsSuperUser)
+	statsModule := statsmod.NewModule(statsCfg, statsStore, oneBotNameResolver{server: wss}, core.IsSuperUser, paths.FontFile)
 	statsModule.Start()
 	defer statsModule.Stop()
 
@@ -299,7 +299,7 @@ func main() {
 		return
 	}
 
-	configBotId = strings.TrimSpace(core.CONFIG.Server.BotID)
+	configBotId = core.NormalizeBotID(core.CONFIG.Server.BotID)
 	upgrader.ReadBufferSize = core.CONFIG.Server.BufferSize
 	upgrader.WriteBufferSize = core.CONFIG.Server.BufferSize
 	http.HandleFunc(core.CONFIG.Server.Suffix, handleLocal)

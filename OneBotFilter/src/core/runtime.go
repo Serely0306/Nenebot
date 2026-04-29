@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -146,6 +147,18 @@ func GetMessageUserID(onebotMessage *OneBotMessage) int64 {
 		return onebotMessage.Partial.Sender.UserID
 	}
 	return onebotMessage.Partial.UserID
+}
+
+func NormalizeBotID(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(value, 10)
 }
 
 func (wss *WsServer) WsServerHandler() error {
@@ -396,12 +409,57 @@ func (wss *WsServer) refreshBotLoginInfo() {
 		}
 		return
 	}
+	wss.applyLoginInfo(extractLoginInfo(resp))
+}
+
+func extractLoginInfo(resp map[string]interface{}) (string, string) {
 	data, _ := resp["data"].(map[string]interface{})
 	nickname, _ := data["nickname"].(string)
-	if strings.TrimSpace(nickname) == "" {
+	return int64ToBotID(toInt64(data["user_id"])), strings.TrimSpace(nickname)
+}
+
+func (wss *WsServer) applyLoginInfo(loginBotID, nickname string) {
+	if nickname != "" {
+		SetBotNickname(nickname)
+	}
+	if NormalizeBotID(CONFIG.Server.BotID) != "" || loginBotID == "" {
 		return
 	}
-	SetBotNickname(strings.TrimSpace(nickname))
+	if wss.BotID != "" && wss.BotID != loginBotID {
+		log.Printf("检测到 get_login_info 返回的 Bot ID 与当前连接标识不一致 (%s -> %s)，正在重置下游连接...\n", wss.BotID, loginBotID)
+		wss.DisconnectAllClients()
+	}
+	wss.BotID = loginBotID
+}
+
+func int64ToBotID(value int64) string {
+	if value <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(value, 10)
+}
+
+func toInt64(value interface{}) int64 {
+	switch v := value.(type) {
+	case int:
+		return int64(v)
+	case int32:
+		return int64(v)
+	case int64:
+		return v
+	case float32:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return n
+	case string:
+		n, _ := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		return n
+	default:
+		return 0
+	}
 }
 
 func (wss *WsServer) DisconnectAllClients() {
@@ -412,6 +470,21 @@ func (wss *WsServer) DisconnectAllClients() {
 			client.conn.Close()
 		}
 	}
+}
+
+func buildBotAppHeaders(botID, accessToken, userAgent string) http.Header {
+	header := http.Header{}
+	if botID != "" {
+		header["X-Self-ID"] = []string{botID}
+	}
+	if accessToken != "" {
+		header["Authorization"] = []string{fmt.Sprintf("Bearer %s", accessToken)}
+	}
+	if userAgent != "" {
+		header["User-Agent"] = []string{userAgent}
+	}
+	header["X-Client-Role"] = []string{"Universal"}
+	return header
 }
 
 func WsClientHandler(wss *WsServer, cfg BotAppsConfig, filter MessageFilter) {
@@ -425,15 +498,11 @@ func WsClientHandler(wss *WsServer, cfg BotAppsConfig, filter MessageFilter) {
 			time.Sleep(time.Duration(CONFIG.Server.SleepTime) * time.Second)
 		}
 
-		header := http.Header{}
 		botID := wss.BotID
 		if botID == "" {
 			botID = CONFIG.Server.BotID
 		}
-		header.Set("x-self-id", botID)
-		header.Set("authorization", fmt.Sprintf("Bearer %s", cfg.AccessToken))
-		header.Set("user-agent", CONFIG.Server.UserAgent)
-		header.Set("x-client-role", "Universal")
+		header := buildBotAppHeaders(botID, cfg.AccessToken, CONFIG.Server.UserAgent)
 
 		dialer := &websocket.Dialer{
 			Proxy:            http.ProxyFromEnvironment,

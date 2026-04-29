@@ -135,7 +135,7 @@ func DefaultPaths(root string) Paths {
 		StatsConfig:  filepath.Join(root, "config", "stats", "config.yaml"),
 		HelpImage:    filepath.Join(root, "data", "help", "help.png"),
 		StatsDB:      filepath.Join(root, "data", "stats", "stats.db"),
-		FontFile:     filepath.Join(root, "assets", "fonts", "simkai.ttf"),
+		FontFile:     filepath.Join("assets", "fonts", "simkai.ttf"),
 	}
 }
 

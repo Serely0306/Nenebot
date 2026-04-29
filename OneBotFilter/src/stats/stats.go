@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"onebotfilter/src/core"
 	"gopkg.in/yaml.v3"
+	"onebotfilter/src/core"
 )
 
 type Config struct {
@@ -35,9 +35,10 @@ type Module struct {
 	stop      chan struct{}
 	resolver  NameResolver
 	superUser func(int64) bool
+	fontPath  string
 }
 
-func NewModule(cfg Config, store *Store, resolver NameResolver, superUser func(int64) bool) *Module {
+func NewModule(cfg Config, store *Store, resolver NameResolver, superUser func(int64) bool, fontPath string) *Module {
 	queueSize := cfg.QueueSize
 	if queueSize <= 0 {
 		queueSize = 256
@@ -49,6 +50,7 @@ func NewModule(cfg Config, store *Store, resolver NameResolver, superUser func(i
 		stop:      make(chan struct{}),
 		resolver:  resolver,
 		superUser: superUser,
+		fontPath:  strings.TrimSpace(fontPath),
 	}
 }
 
