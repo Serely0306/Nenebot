@@ -329,6 +329,45 @@ ORDER BY total_count DESC, bot_name ASC`, where),
 	return result, rows.Err()
 }
 
+func (s *Store) QueryGlobalBotSend(r DateRange) ([]BotSendRank, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if r.Mode == ModeAll || (r.StartDate == "" && r.EndDate == "") {
+		rows, err = s.db.Query(
+			`SELECT bot_name, SUM(send_count) AS total_count
+FROM stats_daily_bot_send
+GROUP BY bot_name
+ORDER BY total_count DESC, bot_name ASC`,
+		)
+	} else {
+		rows, err = s.db.Query(
+			`SELECT bot_name, SUM(send_count) AS total_count
+FROM stats_daily_bot_send
+WHERE stat_date BETWEEN ? AND ?
+GROUP BY bot_name
+ORDER BY total_count DESC, bot_name ASC`,
+			r.StartDate,
+			r.EndDate,
+		)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []BotSendRank
+	for rows.Next() {
+		var rank BotSendRank
+		if err := rows.Scan(&rank.BotName, &rank.SendCount); err != nil {
+			return nil, err
+		}
+		result = append(result, rank)
+	}
+	return result, rows.Err()
+}
+
 func (s *Store) QueryGlobalSummary(r DateRange) (SessionSummary, error) {
 	if r.Mode == ModeAll || (r.StartDate == "" && r.EndDate == "") {
 		row := s.db.QueryRow(

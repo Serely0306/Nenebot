@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -238,12 +239,13 @@ func (wss *WsServer) readLoop(ctx context.Context, readChan chan WsMsg) {
 				wss.logDebugMessage(msg.MsgData)
 				onebotMessage := ParseOneBotMessage(msg.MsgData)
 				if onebotMessage != nil {
-					for _, hook := range wss.upstreamEventHooks {
-						hook(onebotMessage)
+					logInfoIncomingMessage(onebotMessage)
+					for i, hook := range wss.upstreamEventHooks {
+						callUpstreamEventHook(i, hook, onebotMessage)
 					}
 				}
-				for _, handler := range wss.externalCommandHandlers {
-					if handled, response := handler(onebotMessage); handled {
+				for i, handler := range wss.externalCommandHandlers {
+					if handled, response := callExternalCommandHandler(i, handler, onebotMessage); handled {
 						if response != nil {
 							if err := wss.SendCommandResponse(response); err != nil {
 								log.Printf("发送命令响应失败：%v\n", err)
@@ -330,6 +332,25 @@ func logDebugBotAppMessage(botName string, msgType int, msgData []byte) {
 	log.Printf("[BotApp %s] %s\n", botName, summarizeBotAppPayload(msgType, msgData))
 }
 
+func logInfoIncomingMessage(msg *OneBotMessage) {
+	if msg == nil {
+		return
+	}
+	if msg.Partial.PostType != "message" && msg.Partial.PostType != "message_sent" {
+		return
+	}
+	raw := truncateForLog(strings.TrimSpace(msg.Partial.RawMessage), 120)
+	if raw == "" {
+		raw = previewMessageContents(msg.Partial.MessageArray)
+	}
+	switch msg.Partial.MessageType {
+	case "group":
+		log.Printf("[Recv][group:%d][user:%d] %s\n", msg.Partial.GroupID, GetMessageUserID(msg), raw)
+	case "private":
+		log.Printf("[Recv][private][user:%d] %s\n", GetMessageUserID(msg), raw)
+	}
+}
+
 func shouldLogBotAppMessage(msgType int, msgData []byte) bool {
 	if msgType != websocket.TextMessage {
 		return false
@@ -386,10 +407,11 @@ func summarizeBotAppPayload(msgType int, msgData []byte) string {
 	}
 
 	return fmt.Sprintf(
-		"action=%s session=%s(%d) bytes=%d",
+		"action=%s session=%s(%d) preview=%s bytes=%d",
 		action,
 		sessionType,
 		sessionID,
+		truncateForLog(extractOutgoingMessagePreview(params["message"]), 80),
 		len(msgData),
 	)
 }
@@ -400,6 +422,135 @@ func truncateForLog(text string, limit int) string {
 		return text
 	}
 	return text[:limit] + "..."
+}
+
+func extractOutgoingMessagePreview(v interface{}) string {
+	switch value := v.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case []interface{}:
+		parts := make([]string, 0, len(value))
+		for _, item := range value {
+			segment, _ := item.(map[string]interface{})
+			if segment == nil {
+				continue
+			}
+			segType, _ := segment["type"].(string)
+			data, _ := segment["data"].(map[string]interface{})
+			switch segType {
+			case "text":
+				if text, _ := data["text"].(string); strings.TrimSpace(text) != "" {
+					parts = append(parts, strings.TrimSpace(text))
+				}
+			default:
+				if segType != "" {
+					parts = append(parts, "["+segType+"]")
+				}
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, " "))
+	default:
+		return ""
+	}
+}
+
+func previewMessageContents(contents []MessageContent) string {
+	parts := make([]string, 0, len(contents))
+	for _, item := range contents {
+		switch item.Type {
+		case MessageTypeText:
+			if text, _ := item.Data["text"].(string); strings.TrimSpace(text) != "" {
+				parts = append(parts, strings.TrimSpace(text))
+			}
+		default:
+			if item.Type != "" {
+				parts = append(parts, "["+item.Type+"]")
+			}
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func logInfoOutgoingAction(source string, payload map[string]interface{}) {
+	action, _ := payload["action"].(string)
+	params, _ := payload["params"].(map[string]interface{})
+	if action == "" || params == nil || !strings.HasPrefix(strings.ToLower(action), "send") {
+		return
+	}
+	sessionType := "private"
+	sessionID := toInt64(params["user_id"])
+	if action == "send_group_msg" || action == "send_group_forward_msg" || toInt64(params["group_id"]) > 0 || strings.TrimSpace(fmt.Sprintf("%v", params["message_type"])) == "group" {
+		sessionType = "group"
+		sessionID = toInt64(params["group_id"])
+	}
+	preview := truncateForLog(extractOutgoingMessagePreview(params["message"]), 120)
+	if preview == "" {
+		preview = "[" + action + "]"
+	}
+	if sessionType == "group" {
+		log.Printf("[Send][%s][group:%d] %s\n", source, sessionID, preview)
+		return
+	}
+	log.Printf("[Send][%s][private:%d] %s\n", source, sessionID, preview)
+}
+
+func logPluginPanic(kind string, index int, detail string, recovered interface{}) {
+	name := fmt.Sprintf("%s#%d", kind, index)
+	if strings.TrimSpace(detail) != "" {
+		name += "(" + detail + ")"
+	}
+	log.Printf("[PANIC][%s] %v\n%s", name, recovered, debug.Stack())
+}
+
+func callExternalCommandHandler(index int, handler ExternalCommandHandler, msg *OneBotMessage) (handled bool, response map[string]interface{}) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			handled = false
+			response = nil
+			logPluginPanic("command-handler", index, "", recovered)
+		}
+	}()
+	return handler(msg)
+}
+
+func callUpstreamEventHook(index int, hook UpstreamEventHook, msg *OneBotMessage) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logPluginPanic("upstream-hook", index, "", recovered)
+		}
+	}()
+	hook(msg)
+}
+
+func callBotActionHook(index int, botName string, hook BotActionHook, msgType int, msgData []byte) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logPluginPanic("bot-action-hook", index, botName, recovered)
+		}
+	}()
+	hook(botName, msgType, msgData)
+}
+
+func callInternalSendHook(index int, hook InternalSendHook, response map[string]interface{}) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logPluginPanic("internal-send-hook", index, "", recovered)
+		}
+	}()
+	hook(response)
+}
+
+func safeFilterMessage(clientName string, filter MessageFilter, msg *OneBotMessage) (allowed bool) {
+	if filter == nil {
+		return true
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			allowed = true
+			log.Printf("[PANIC][message-filter:%s] %v\n%s", clientName, recovered, debug.Stack())
+		}
+	}()
+	return filter.Filter(msg)
 }
 
 func (wss *WsServer) writeLoop(ctx context.Context, writeChan chan WsMsg) {
@@ -427,8 +578,8 @@ func (wss *WsServer) SendCommandResponse(response map[string]interface{}) error 
 	if wss.Conn == nil {
 		return errors.New("尚未连接到 OneBot 客户端")
 	}
-	for _, hook := range wss.internalSendHooks {
-		hook(response)
+	for i, hook := range wss.internalSendHooks {
+		callInternalSendHook(i, hook, response)
 	}
 	responseData, err := json.Marshal(response)
 	if err != nil {
@@ -437,6 +588,7 @@ func (wss *WsServer) SendCommandResponse(response map[string]interface{}) error 
 	if err := wss.WriteMessage(websocket.TextMessage, responseData); err != nil {
 		return fmt.Errorf("发送命令响应失败: %v", err)
 	}
+	logInfoOutgoingAction("filter", response)
 	if CONFIG.Server.Debug {
 		log.Printf("已发送命令响应到 OneBot 客户端：%s\n", string(responseData))
 	}
@@ -665,8 +817,14 @@ func (wc *WsClient) readLoop(ctx context.Context, wss *WsServer) {
 				return
 			}
 			logDebugBotAppMessage(wc.Name, msg.MsgType, msg.MsgData)
-			for _, hook := range wss.botActionHooks {
-				hook(wc.Name, msg.MsgType, msg.MsgData)
+			if msg.MsgType == websocket.TextMessage {
+				var payload map[string]interface{}
+				if err := json.Unmarshal(msg.MsgData, &payload); err == nil {
+					logInfoOutgoingAction(wc.Name, payload)
+				}
+			}
+			for i, hook := range wss.botActionHooks {
+				callBotActionHook(i, wc.Name, hook, msg.MsgType, msg.MsgData)
 			}
 			if err := wss.WriteMessage(msg.MsgType, msg.MsgData); err != nil {
 				log.Println("写入 OneBot 客户端失败：", err)
@@ -693,7 +851,7 @@ func (wc *WsClient) writeLoop(ctx context.Context) {
 					continue
 				}
 				if onebotMessage.Partial.RawMessage != "" {
-					if wc.filter == nil || wc.filter.Filter(onebotMessage) {
+					if safeFilterMessage(wc.Name, wc.filter, onebotMessage) {
 						if err := wc.conn.WriteJSON(onebotMessage.Intact); err != nil {
 							log.Printf("向 %s 发送过滤后的消息失败：%v\n", wc.Name, err)
 						}

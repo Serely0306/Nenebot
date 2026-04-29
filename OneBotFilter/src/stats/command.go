@@ -290,23 +290,37 @@ func (m *Module) handleGlobalStats(msg *core.OneBotMessage, r DateRange) map[str
 	if err != nil {
 		return buildReply(msg, fmt.Sprintf("全局统计查询失败: %v", err))
 	}
+	globalBotRows, err := m.store.QueryGlobalBotSend(r)
+	if err != nil {
+		return buildReply(msg, fmt.Sprintf("全局 bot 统计查询失败: %v", err))
+	}
 	if summary.RecvCount == 0 && summary.SendCount == 0 && len(rows) == 0 {
 		return buildReply(msg, "该时间范围暂无统计记录")
 	}
 
-	totalTraffic := max64(1, summary.RecvCount+summary.SendCount)
-	renderRows := make([]RankRow, 0, len(rows))
-	for i, row := range rows {
-		count := row.RecvCount + row.SendCount
-		renderRows = append(renderRows, RankRow{
-			Index:   i + 1,
-			Name:    globalSessionLabel(m.cfg.PrivateLabel, row.SessionType, row.SessionID),
-			Count:   count,
-			Percent: percentage(count, totalTraffic),
+	botNames := collectGlobalBotNames(globalBotRows)
+	renderRows := make([]GlobalStatsRow, 0, len(rows))
+	for _, row := range rows {
+		botCounts := make([]int64, len(botNames))
+		sessionBotRows, err := m.store.QueryBotSend(row.SessionType, row.SessionID, r)
+		if err != nil {
+			return buildReply(msg, fmt.Sprintf("会话 bot 统计查询失败: %v", err))
+		}
+		sessionBotMap := make(map[string]int64, len(sessionBotRows))
+		for _, botRow := range sessionBotRows {
+			sessionBotMap[botRow.BotName] = botRow.SendCount
+		}
+		for i, botName := range botNames {
+			botCounts[i] = sessionBotMap[botName]
+		}
+		renderRows = append(renderRows, GlobalStatsRow{
+			SessionName: globalSessionLabel(m.cfg.PrivateLabel, row.SessionType, row.SessionID),
+			TotalCount:  row.RecvCount + row.SendCount,
+			BotCounts:   botCounts,
 		})
 	}
 
-	imageBytes, err := RenderStatsImage(m.fontPath, RenderStatsInput{
+	imageBytes, err := RenderGlobalStatsImage(m.fontPath, RenderGlobalStatsInput{
 		Title:             globalStatsTitle(r),
 		SessionName:       "全部会话",
 		RangeLabel:        rangeLabel(r),
@@ -314,12 +328,55 @@ func (m *Module) handleGlobalStats(msg *core.OneBotMessage, r DateRange) map[str
 		SendCount:         summary.SendCount,
 		BotSendCount:      summary.BotSendCount,
 		InternalSendCount: summary.InternalSendCount,
+		BotNames:          botNames,
+		BotSummary:        fillGlobalBotSummary(botNames, globalBotRows),
 		Rows:              renderRows,
 	})
 	if err != nil {
 		return buildReply(msg, fmt.Sprintf("统计图片生成失败: %v", err))
 	}
 	return buildImageReply(msg, imageBytes)
+}
+
+func collectGlobalBotNames(globalBotRows []BotSendRank) []string {
+	seen := make(map[string]struct{})
+	names := make([]string, 0, len(core.CONFIG.BotApps))
+	for _, bot := range core.CONFIG.BotApps {
+		names = append(names, bot.Name)
+		seen[bot.Name] = struct{}{}
+	}
+
+	active := make(map[string]struct{})
+	for _, botRow := range globalBotRows {
+		if botRow.SendCount <= 0 {
+			continue
+		}
+		active[botRow.BotName] = struct{}{}
+		if _, ok := seen[botRow.BotName]; !ok {
+			names = append(names, botRow.BotName)
+			seen[botRow.BotName] = struct{}{}
+		}
+	}
+
+	filtered := names[:0]
+	for _, name := range names {
+		if _, ok := active[name]; ok {
+			filtered = append(filtered, name)
+		}
+	}
+	return filtered
+}
+
+func fillGlobalBotSummary(botNames []string, rows []BotSendRank) []int64 {
+	counts := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		counts[row.BotName] = row.SendCount
+	}
+	result := make([]int64, len(botNames))
+	for i, botName := range botNames {
+		result[i] = counts[botName]
+	}
+	return result
 }
 
 func extractCommandText(msg *core.OneBotMessage) string {

@@ -42,9 +42,27 @@ type RenderStatsInput struct {
 	Rows              []RankRow
 }
 
+type GlobalStatsRow struct {
+	SessionName string
+	TotalCount  int64
+	BotCounts   []int64
+}
+
+type RenderGlobalStatsInput struct {
+	Title             string
+	SessionName       string
+	RangeLabel        string
+	RecvCount         int64
+	SendCount         int64
+	BotSendCount      int64
+	InternalSendCount int64
+	BotNames          []string
+	BotSummary        []int64
+	Rows              []GlobalStatsRow
+}
+
 type fontPair struct {
 	primary  font.Face
-	fallback font.Face
 	size     float64
 	emojiDir string
 }
@@ -69,6 +87,96 @@ func RenderRankImage(fontPath string, input RenderRankInput) ([]byte, error) {
 func RenderStatsImage(fontPath string, input RenderStatsInput) ([]byte, error) {
 	subtitle := fmt.Sprintf("接收 %d / 发送 %d / bot %d / 内部 %d", input.RecvCount, input.SendCount, input.BotSendCount, input.InternalSendCount)
 	return renderCardImage(fontPath, input.Title, input.SessionName, input.RangeLabel, subtitle, input.Rows)
+}
+
+func RenderGlobalStatsImage(fontPath string, input RenderGlobalStatsInput) ([]byte, error) {
+	fonts, err := loadFonts(fontPath)
+	if err != nil {
+		return nil, err
+	}
+
+	const (
+		width       = 1320
+		headerH     = 250
+		padding     = 32
+		rowHeight   = 62
+		headerColor = 32
+	)
+
+	colCount := 2 + len(input.BotNames)
+	if colCount < 2 {
+		colCount = 2
+	}
+	sessionColW := 340.0
+	otherColW := float64(width-padding*2) - sessionColW
+	otherColW = otherColW / float64(colCount-1)
+
+	height := int(float64(headerH+padding+padding) + rowHeight*float64(maxInt(2, len(input.Rows)+1)))
+	dc := gg.NewContext(width, height)
+	bgTop := color.RGBA{18, 24, 43, 255}
+	bgBottom := color.RGBA{12, 39, 68, 255}
+	for y := 0; y < height; y++ {
+		t := float64(y) / float64(height)
+		r := lerp(float64(bgTop.R), float64(bgBottom.R), t)
+		g := lerp(float64(bgTop.G), float64(bgBottom.G), t)
+		b := lerp(float64(bgTop.B), float64(bgBottom.B), t)
+		dc.SetRGB255(int(r), int(g), int(b))
+		dc.DrawLine(0, float64(y), width, float64(y))
+		dc.Stroke()
+	}
+
+	setColor(dc, 245, 248, 255)
+	drawTextLeft(dc, fonts.title, input.Title, float64(padding), 52)
+	setColor(dc, 210, 220, 240)
+	drawTextLeft(dc, fonts.body, input.SessionName, float64(padding), 96)
+	drawTextLeft(dc, fonts.meta, input.RangeLabel, float64(padding), 126)
+	drawTextLeft(dc, fonts.meta, fmt.Sprintf("接收 %d / 发送 %d / bot %d / 内部 %d", input.RecvCount, input.SendCount, input.BotSendCount, input.InternalSendCount), float64(padding), 156)
+	drawTextLeft(dc, fonts.meta, buildBotSummaryLine(input.BotNames, input.BotSummary), float64(padding), 184)
+
+	tableTop := float64(headerH)
+	tableWidth := float64(width - padding*2)
+	dc.SetRGBA255(255, 255, 255, headerColor)
+	dc.DrawRoundedRectangle(float64(padding), tableTop, tableWidth, rowHeight, 12)
+	dc.Fill()
+
+	x := float64(padding)
+	setColor(dc, 210, 220, 240)
+	drawTableCell(dc, fonts.body, "会话", x+16, tableTop+38, sessionColW-32, false)
+	x += sessionColW
+	drawTableCell(dc, fonts.body, "总计", x+16, tableTop+38, otherColW-32, true)
+	x += otherColW
+	for _, botName := range input.BotNames {
+		drawTableCell(dc, fonts.body, botName, x+16, tableTop+38, otherColW-32, true)
+		x += otherColW
+	}
+
+	for i, row := range input.Rows {
+		top := tableTop + rowHeight*float64(i+1)
+		alpha := 18
+		if i%2 == 1 {
+			alpha = 24
+		}
+		dc.SetRGBA255(255, 255, 255, alpha)
+		dc.DrawRoundedRectangle(float64(padding), top, tableWidth, rowHeight-8, 10)
+		dc.Fill()
+
+		x = float64(padding)
+		setColor(dc, 235, 240, 250)
+		drawTableCell(dc, fonts.meta, row.SessionName, x+16, top+34, sessionColW-32, false)
+		x += sessionColW
+		drawTableCell(dc, fonts.meta, fmt.Sprintf("%d", row.TotalCount), x+16, top+34, otherColW-32, true)
+		x += otherColW
+		for _, count := range row.BotCounts {
+			drawTableCell(dc, fonts.meta, fmt.Sprintf("%d", count), x+16, top+34, otherColW-32, true)
+			x += otherColW
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, dc.Image()); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func renderCardImage(fontPath, title, sessionName, rangeLabel, subtitle string, rows []RankRow) ([]byte, error) {
@@ -171,44 +279,11 @@ func loadFontPair(primaryPath string, size float64) (fontPair, error) {
 		return fontPair{}, err
 	}
 
-	var fallback font.Face
-	if fallbackPath := findFallbackEmojiFont(primaryPath); fallbackPath != "" {
-		fallback, _ = gg.LoadFontFace(fallbackPath, size)
-	}
-
 	return fontPair{
 		primary:  primary,
-		fallback: fallback,
 		size:     size,
 		emojiDir: filepath.Join(filepath.Dir(filepath.Dir(primaryPath)), "emojis", "72x72"),
 	}, nil
-}
-
-func findFallbackEmojiFont(primaryPath string) string {
-	candidates := []string{
-		filepath.Join(filepath.Dir(primaryPath), "NotoEmoji-Regular.ttf"),
-		filepath.Join(filepath.Dir(primaryPath), "NotoColorEmoji.ttf"),
-		filepath.Join(filepath.Dir(primaryPath), "seguiemj.ttf"),
-		`C:\Windows\Fonts\seguiemj.ttf`,
-		`C:\Windows\Fonts\SegoeUIEmoji.ttf`,
-		`/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf`,
-		`/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf`,
-		`/usr/share/fonts/noto/NotoEmoji-Regular.ttf`,
-		`/usr/share/fonts/noto/NotoColorEmoji.ttf`,
-	}
-	for _, candidate := range candidates {
-		if candidate == "" || samePath(primaryPath, candidate) {
-			continue
-		}
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	return ""
-}
-
-func samePath(a, b string) bool {
-	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 }
 
 func drawTextLeft(dc *gg.Context, pair fontPair, text string, x, y float64) {
@@ -222,7 +297,7 @@ func drawTextRight(dc *gg.Context, pair fontPair, text string, x, y float64) {
 
 func drawText(dc *gg.Context, pair fontPair, text string, x, y float64) {
 	segments := segmentTextRuns(text)
-	if pair.fallback == nil || !hasEmojiRun(segments) {
+	if !hasEmojiRun(segments) {
 		dc.SetFontFace(pair.primary)
 		dc.DrawString(text, x, y)
 		return
@@ -236,12 +311,14 @@ func drawText(dc *gg.Context, pair fontPair, text string, x, y float64) {
 				cursor += pair.size
 				continue
 			}
+			dc.SetFontFace(pair.primary)
+			placeholder := missingEmojiPlaceholder()
+			dc.DrawString(placeholder, cursor, y)
+			w, _ := dc.MeasureString(placeholder)
+			cursor += w
+			continue
 		}
-		face := pair.primary
-		if segment.emoji && pair.fallback != nil {
-			face = pair.fallback
-		}
-		dc.SetFontFace(face)
+		dc.SetFontFace(pair.primary)
 		dc.DrawString(segment.text, cursor, y)
 		w, _ := dc.MeasureString(segment.text)
 		cursor += w
@@ -250,7 +327,7 @@ func drawText(dc *gg.Context, pair fontPair, text string, x, y float64) {
 
 func measureText(dc *gg.Context, pair fontPair, text string) float64 {
 	segments := segmentTextRuns(text)
-	if pair.fallback == nil || !hasEmojiRun(segments) {
+	if !hasEmojiRun(segments) {
 		dc.SetFontFace(pair.primary)
 		w, _ := dc.MeasureString(text)
 		return w
@@ -263,12 +340,13 @@ func measureText(dc *gg.Context, pair fontPair, text string) float64 {
 				width += pair.size
 				continue
 			}
+			dc.SetFontFace(pair.primary)
+			placeholder := missingEmojiPlaceholder()
+			w, _ := dc.MeasureString(placeholder)
+			width += w
+			continue
 		}
-		face := pair.primary
-		if segment.emoji && pair.fallback != nil {
-			face = pair.fallback
-		}
-		dc.SetFontFace(face)
+		dc.SetFontFace(pair.primary)
 		w, _ := dc.MeasureString(segment.text)
 		width += w
 	}
@@ -376,8 +454,32 @@ func emojiFilename(text string, stripVS16 bool) string {
 	return strings.Join(parts, "-")
 }
 
+func missingEmojiPlaceholder() string {
+	return "□"
+}
+
 func setColor(dc *gg.Context, r, g, b int) {
 	dc.SetRGB255(r, g, b)
+}
+
+func drawTableCell(dc *gg.Context, pair fontPair, text string, x, y, maxWidth float64, alignRight bool) {
+	text = ellipsizeText(dc, pair, text, maxWidth)
+	if alignRight {
+		drawTextRight(dc, pair, text, x+maxWidth, y)
+		return
+	}
+	drawTextLeft(dc, pair, text, x, y)
+}
+
+func buildBotSummaryLine(botNames []string, counts []int64) string {
+	if len(botNames) == 0 || len(counts) == 0 {
+		return "bot 明细：无"
+	}
+	parts := make([]string, 0, minInt(len(botNames), len(counts)))
+	for i := 0; i < len(botNames) && i < len(counts); i++ {
+		parts = append(parts, fmt.Sprintf("%s %d", botNames[i], counts[i]))
+	}
+	return "bot 明细：" + strings.Join(parts, " / ")
 }
 
 func lerp(a, b, t float64) float64 {
@@ -386,6 +488,13 @@ func lerp(a, b, t float64) float64 {
 
 func maxInt(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b
