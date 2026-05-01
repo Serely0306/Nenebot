@@ -842,6 +842,35 @@ func buildBotAppHeaders(botID, accessToken, userAgent string) http.Header {
 	return header
 }
 
+func buildBotAppConnectEvent(botID string, now time.Time) (map[string]interface{}, bool) {
+	normalized := NormalizeBotID(botID)
+	if normalized == "" {
+		return nil, false
+	}
+	selfID, err := strconv.ParseInt(normalized, 10, 64)
+	if err != nil || selfID <= 0 {
+		return nil, false
+	}
+	return map[string]interface{}{
+		"time":            now.Unix(),
+		"self_id":         selfID,
+		"post_type":       "meta_event",
+		"meta_event_type": "lifecycle",
+		"sub_type":        "connect",
+	}, true
+}
+
+func sendBotAppConnectEvent(conn *websocket.Conn, botID string) error {
+	if conn == nil {
+		return errors.New("bot 应用端连接为空")
+	}
+	payload, ok := buildBotAppConnectEvent(botID, time.Now())
+	if !ok {
+		return nil
+	}
+	return conn.WriteJSON(payload)
+}
+
 func WsClientHandler(wss *WsServer, cfg BotAppsConfig, filter MessageFilter) {
 	if err := cfg.Check(); err != nil {
 		log.Printf("%s 的配置有问题：%v\n", cfg.Name, err)
@@ -870,6 +899,15 @@ func WsClientHandler(wss *WsServer, cfg BotAppsConfig, filter MessageFilter) {
 			log.Printf("连接 %s 失败：%v\n", cfg.Name, err)
 			time.Sleep(time.Duration(CONFIG.Server.SleepTime) * time.Second)
 			continue
+		}
+		if err := sendBotAppConnectEvent(conn, botID); err != nil {
+			log.Printf("向 %s 发送连接握手失败：%v\n", cfg.Name, err)
+			conn.Close()
+			time.Sleep(time.Duration(CONFIG.Server.SleepTime) * time.Second)
+			continue
+		}
+		if NormalizeBotID(botID) != "" {
+			log.Printf("已向 %s 发送连接握手 self_id=%s\n", cfg.Name, NormalizeBotID(botID))
 		}
 
 		client := &WsClient{
