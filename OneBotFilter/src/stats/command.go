@@ -233,20 +233,28 @@ func (m *Module) handleRank(msg *core.OneBotMessage, r DateRange) map[string]int
 		return buildReply(msg, fmt.Sprintf("发言榜查询失败: %v", err))
 	}
 
+	userIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		userIDs = append(userIDs, row.UserID)
+	}
+	avatars := fetchUserAvatars(userIDs)
+
 	rankRows := make([]RankRow, 0, len(rows))
 	for i, row := range rows {
 		name := m.displayName(msg.Partial.GroupID, row.UserID, row.Snapshot, sessionType == "group")
 		rankRows = append(rankRows, RankRow{
 			Index:   i + 1,
+			UserID:  row.UserID,
 			Name:    name,
 			Count:   row.RecvCount,
 			Percent: percentage(row.RecvCount, summary.RecvCount),
+			Avatar:  avatars[row.UserID],
 		})
 	}
 
 	imageBytes, err := RenderRankImage(m.fontPath, RenderRankInput{
 		Title:       rankTitle(r),
-		SessionName: sessionLabel(msg),
+		SessionName: m.messageSessionDisplayName(msg),
 		RangeLabel:  rangeLabel(r),
 		TotalCount:  summary.RecvCount,
 		Rows:        rankRows,
@@ -285,8 +293,9 @@ func (m *Module) handleStats(msg *core.OneBotMessage, r DateRange) map[string]in
 
 	imageBytes, err := RenderStatsImage(m.fontPath, RenderStatsInput{
 		Title:             statsTitle(r),
-		SessionName:       sessionLabel(msg),
+		SessionName:       m.messageSessionDisplayName(msg),
 		RangeLabel:        rangeLabel(r),
+		SessionAvatar:     sessionAvatar(sessionType, sessionID),
 		RecvCount:         summary.RecvCount,
 		SendCount:         summary.SendCount,
 		BotSendCount:      summary.BotSendCount,
@@ -318,6 +327,13 @@ func (m *Module) handleGlobalStats(msg *core.OneBotMessage, r DateRange) map[str
 	}
 
 	botNames := collectGlobalBotNames(globalBotRows)
+	groupIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		if row.SessionType == "group" && row.SessionID > 0 {
+			groupIDs = append(groupIDs, row.SessionID)
+		}
+	}
+	groupAvatars := fetchGroupAvatars(groupIDs)
 	renderRows := make([]GlobalStatsRow, 0, len(rows))
 	for _, row := range rows {
 		botCounts := make([]int64, len(botNames))
@@ -333,9 +349,10 @@ func (m *Module) handleGlobalStats(msg *core.OneBotMessage, r DateRange) map[str
 			botCounts[i] = sessionBotMap[botName]
 		}
 		renderRows = append(renderRows, GlobalStatsRow{
-			SessionName: globalSessionLabel(m.cfg.PrivateLabel, row.SessionType, row.SessionID),
+			SessionName: m.globalSessionDisplayName(row.SessionType, row.SessionID),
 			TotalCount:  row.RecvCount + row.SendCount,
 			BotCounts:   botCounts,
+			Avatar:      groupAvatars[row.SessionID],
 		})
 	}
 
@@ -448,14 +465,29 @@ func (m *Module) rankLimit() int {
 	return 15
 }
 
+type syncNameResolver interface {
+	ResolveGroupMemberNameSync(groupID, userID int64) (string, error)
+	ResolvePrivateNameSync(userID int64) (string, error)
+	ResolveGroupNameSync(groupID int64) (string, error)
+}
+
 func (m *Module) displayName(groupID, userID int64, snapshot string, isGroup bool) string {
 	if m.resolver != nil {
 		if isGroup {
+			if syncResolver, ok := m.resolver.(syncNameResolver); ok {
+				if name, err := syncResolver.ResolveGroupMemberNameSync(groupID, userID); err == nil && strings.TrimSpace(name) != "" {
+					return name
+				}
+			}
 			if name, err := m.resolver.ResolveGroupMemberName(groupID, userID); err == nil && strings.TrimSpace(name) != "" {
 				return name
 			}
 		} else if name, err := m.resolver.ResolvePrivateName(userID); err == nil && strings.TrimSpace(name) != "" {
 			return name
+		} else if syncResolver, ok := m.resolver.(syncNameResolver); ok {
+			if name, err := syncResolver.ResolvePrivateNameSync(userID); err == nil && strings.TrimSpace(name) != "" {
+				return name
+			}
 		}
 	}
 	if strings.TrimSpace(snapshot) != "" {
@@ -478,9 +510,9 @@ func sessionFromMessage(msg *core.OneBotMessage) (string, int64) {
 	return "private", 0
 }
 
-func sessionLabel(msg *core.OneBotMessage) string {
+func (m *Module) messageSessionDisplayName(msg *core.OneBotMessage) string {
 	if msg.Partial.MessageType == "group" {
-		return fmt.Sprintf("群聊(%d)", msg.Partial.GroupID)
+		return m.globalSessionDisplayName("group", msg.Partial.GroupID)
 	}
 	return "私聊汇总"
 }
@@ -522,14 +554,31 @@ func globalStatsTitle(r DateRange) string {
 	return "全局消息统计"
 }
 
-func globalSessionLabel(privateLabel, sessionType string, sessionID int64) string {
+func (m *Module) globalSessionDisplayName(sessionType string, sessionID int64) string {
 	if sessionType == "private" {
-		if strings.TrimSpace(privateLabel) != "" {
-			return privateLabel
+		if strings.TrimSpace(m.cfg.PrivateLabel) != "" {
+			return m.cfg.PrivateLabel
 		}
 		return "私聊汇总"
 	}
+	if m.resolver != nil {
+		if syncResolver, ok := m.resolver.(syncNameResolver); ok {
+			if name, err := syncResolver.ResolveGroupNameSync(sessionID); err == nil && strings.TrimSpace(name) != "" {
+				return fmt.Sprintf("%s(%d)", name, sessionID)
+			}
+		}
+		if name, err := m.resolver.ResolveGroupName(sessionID); err == nil && strings.TrimSpace(name) != "" {
+			return fmt.Sprintf("%s(%d)", name, sessionID)
+		}
+	}
 	return fmt.Sprintf("群聊(%d)", sessionID)
+}
+
+func sessionAvatar(sessionType string, sessionID int64) []byte {
+	if sessionType != "group" || sessionID <= 0 {
+		return nil
+	}
+	return fetchGroupAvatar(sessionID)
 }
 
 func percentage(v, total int64) float64 {

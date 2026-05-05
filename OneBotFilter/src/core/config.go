@@ -22,20 +22,21 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host        string            `mapstructure:"host" yaml:"host"`
-	Port        uint              `mapstructure:"port" yaml:"port"`
-	Suffix      string            `mapstructure:"suffix" yaml:"suffix"`
-	BotID       string            `mapstructure:"bot-id" yaml:"bot-id"`
-	UserAgent   string            `mapstructure:"user-agent" yaml:"user-agent"`
-	Default     DefaultConfig     `mapstructure:"default" yaml:"default"`
-	BufferSize  int               `mapstructure:"buffer-size" yaml:"buffer-size"`
-	SleepTime   float32           `mapstructure:"sleep-time" yaml:"sleep-time"`
-	Debug       bool              `mapstructure:"debug" yaml:"debug"`
-	AccessToken string            `mapstructure:"access-token" yaml:"access-token"`
-	Help        HelpConfig        `mapstructure:"help" yaml:"help"`
-	FileServer  FileServerConfig  `mapstructure:"file-server" yaml:"file-server"`
-	CommandAuth CommandAuthConfig `mapstructure:"command-auth" yaml:"command-auth"`
-	Blocked     BlockedConfig     `mapstructure:"blocked" yaml:"blocked"`
+	Host         string             `mapstructure:"host" yaml:"host"`
+	Port         uint               `mapstructure:"port" yaml:"port"`
+	Suffix       string             `mapstructure:"suffix" yaml:"suffix"`
+	BotID        string             `mapstructure:"bot-id" yaml:"bot-id"`
+	UserAgent    string             `mapstructure:"user-agent" yaml:"user-agent"`
+	Default      DefaultConfig      `mapstructure:"default" yaml:"default"`
+	BufferSize   int                `mapstructure:"buffer-size" yaml:"buffer-size"`
+	SleepTime    float32            `mapstructure:"sleep-time" yaml:"sleep-time"`
+	Debug        bool               `mapstructure:"debug" yaml:"debug"`
+	AccessToken  string             `mapstructure:"access-token" yaml:"access-token"`
+	Help         HelpConfig         `mapstructure:"help" yaml:"help"`
+	FileServer   FileServerConfig   `mapstructure:"file-server" yaml:"file-server"`
+	CommandAuth  CommandAuthConfig  `mapstructure:"command-auth" yaml:"command-auth"`
+	Blocked      BlockedConfig      `mapstructure:"blocked" yaml:"blocked"`
+	BotAppNotify BotAppNotifyConfig `mapstructure:"bot-app-notify" yaml:"bot-app-notify"`
 }
 
 type DefaultConfig struct {
@@ -73,6 +74,14 @@ type CommandAuthConfig struct {
 type BlockedConfig struct {
 	UserIDs  []int64 `mapstructure:"user-ids" yaml:"user-ids"`
 	GroupIDs []int64 `mapstructure:"group-ids" yaml:"group-ids"`
+}
+
+type BotAppNotifyConfig struct {
+	Enabled            bool    `mapstructure:"enabled" yaml:"enabled"`
+	NotifyReconnect    bool    `mapstructure:"notify-reconnect" yaml:"notify-reconnect"`
+	NotifyDelaySeconds int     `mapstructure:"notify-delay-seconds" yaml:"notify-delay-seconds"`
+	PrivateIDs         []int64 `mapstructure:"private-ids" yaml:"private-ids"`
+	GroupIDs           []int64 `mapstructure:"group-ids" yaml:"group-ids"`
 }
 
 type BotAppsConfig struct {

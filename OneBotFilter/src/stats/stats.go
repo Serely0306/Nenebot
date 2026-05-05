@@ -27,6 +27,7 @@ type Config struct {
 type NameResolver interface {
 	ResolveGroupMemberName(groupID, userID int64) (string, error)
 	ResolvePrivateName(userID int64) (string, error)
+	ResolveGroupName(groupID int64) (string, error)
 }
 
 type Module struct {

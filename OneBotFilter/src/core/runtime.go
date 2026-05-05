@@ -877,6 +877,14 @@ func WsClientHandler(wss *WsServer, cfg BotAppsConfig, filter MessageFilter) {
 		return
 	}
 
+	everConnected := false
+	wasDisconnected := false
+	var disconnectCancel context.CancelFunc
+	defer func() {
+		if disconnectCancel != nil {
+			disconnectCancel()
+		}
+	}()
 	for {
 		for wss.BotID == "" && CONFIG.Server.BotID == "" {
 			time.Sleep(time.Duration(CONFIG.Server.SleepTime) * time.Second)
@@ -935,10 +943,31 @@ func WsClientHandler(wss *WsServer, cfg BotAppsConfig, filter MessageFilter) {
 		} else {
 			log.Printf("已连接到 %s\n", cfg.Name)
 		}
+		if wasDisconnected {
+			if disconnectCancel != nil {
+				disconnectCancel()
+				disconnectCancel = nil
+			}
+			if CONFIG.Server.BotAppNotify.NotifyReconnect {
+				wss.notifyBotAppLifecycle(cfg.Name, true, nil)
+			}
+		}
+		everConnected = true
+		wasDisconnected = false
 
 		for {
 			mt, msg, err := client.conn.ReadMessage()
 			if err != nil {
+				log.Printf("%s 连接已断开：%v\n", cfg.Name, err)
+				if everConnected {
+					if disconnectCancel != nil {
+						disconnectCancel()
+					}
+					notifyCtx, notifyCancel := context.WithCancel(context.Background())
+					disconnectCancel = notifyCancel
+					wss.scheduleBotAppDisconnectNotify(notifyCtx, cfg.Name, err)
+					wasDisconnected = true
+				}
 				client.conn.Close()
 				wss.RemoveWsClient(client.Name)
 				time.Sleep(5 * time.Second)
@@ -947,6 +976,70 @@ func WsClientHandler(wss *WsServer, cfg BotAppsConfig, filter MessageFilter) {
 			client.readChan <- WsMsg{MsgType: mt, MsgData: msg}
 		}
 		client.close(cancel)
+	}
+}
+
+func (wss *WsServer) scheduleBotAppDisconnectNotify(ctx context.Context, botName string, reason error) {
+	delay := botAppNotifyDelay(CONFIG.Server.BotAppNotify)
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			wss.notifyBotAppLifecycle(botName, false, reason)
+		}
+	}()
+}
+
+func botAppNotifyDelay(cfg BotAppNotifyConfig) time.Duration {
+	if cfg.NotifyDelaySeconds <= 0 {
+		return 30 * time.Second
+	}
+	return time.Duration(cfg.NotifyDelaySeconds) * time.Second
+}
+
+func (wss *WsServer) notifyBotAppLifecycle(botName string, connected bool, reason error) {
+	cfg := CONFIG.Server.BotAppNotify
+	if !cfg.Enabled || (len(cfg.PrivateIDs) == 0 && len(cfg.GroupIDs) == 0) {
+		return
+	}
+	status := "断开"
+	if connected {
+		status = "恢复"
+	}
+	text := fmt.Sprintf("[OneBotFilter] 下游 bot-app %s 已%s", botName, status)
+	if reason != nil && !connected {
+		text += fmt.Sprintf("\n原因：%v", reason)
+	}
+	for _, userID := range cfg.PrivateIDs {
+		if userID <= 0 {
+			continue
+		}
+		if err := wss.SendCommandResponse(map[string]interface{}{
+			"action": "send_private_msg",
+			"params": map[string]interface{}{
+				"user_id": userID,
+				"message": text,
+			},
+		}); err != nil && CONFIG.Server.Debug {
+			log.Printf("发送 bot-app 状态私聊通知失败：bot=%s user=%d err=%v\n", botName, userID, err)
+		}
+	}
+	for _, groupID := range cfg.GroupIDs {
+		if groupID <= 0 {
+			continue
+		}
+		if err := wss.SendCommandResponse(map[string]interface{}{
+			"action": "send_group_msg",
+			"params": map[string]interface{}{
+				"group_id": groupID,
+				"message":  text,
+			},
+		}); err != nil && CONFIG.Server.Debug {
+			log.Printf("发送 bot-app 状态群聊通知失败：bot=%s group=%d err=%v\n", botName, groupID, err)
+		}
 	}
 }
 

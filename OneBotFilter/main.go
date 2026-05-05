@@ -168,12 +168,14 @@ func handleLocal(w http.ResponseWriter, r *http.Request) {
 }
 
 type oneBotNameResolver struct {
-	server          *core.WsServer
-	mu              sync.RWMutex
-	groupNames      map[groupMemberKey]cachedName
-	privateNames    map[int64]cachedName
-	groupRefreshing map[groupMemberKey]struct{}
-	privateLoading  map[int64]struct{}
+	server            *core.WsServer
+	mu                sync.RWMutex
+	groupTitleNames   map[int64]cachedName
+	groupNames        map[groupMemberKey]cachedName
+	privateNames      map[int64]cachedName
+	groupTitleLoading map[int64]struct{}
+	groupRefreshing   map[groupMemberKey]struct{}
+	privateLoading    map[int64]struct{}
 }
 
 type groupMemberKey struct {
@@ -190,11 +192,13 @@ const nameCacheTTL = 6 * time.Hour
 
 func newOneBotNameResolver(server *core.WsServer) *oneBotNameResolver {
 	return &oneBotNameResolver{
-		server:          server,
-		groupNames:      make(map[groupMemberKey]cachedName),
-		privateNames:    make(map[int64]cachedName),
-		groupRefreshing: make(map[groupMemberKey]struct{}),
-		privateLoading:  make(map[int64]struct{}),
+		server:            server,
+		groupTitleNames:   make(map[int64]cachedName),
+		groupNames:        make(map[groupMemberKey]cachedName),
+		privateNames:      make(map[int64]cachedName),
+		groupTitleLoading: make(map[int64]struct{}),
+		groupRefreshing:   make(map[groupMemberKey]struct{}),
+		privateLoading:    make(map[int64]struct{}),
 	}
 }
 
@@ -232,6 +236,20 @@ func (r *oneBotNameResolver) ResolvePrivateName(userID int64) (string, error) {
 	}
 	r.refreshPrivateNameAsync(userID)
 	return "", fmt.Errorf("私聊昵称缓存未命中")
+}
+
+func (r *oneBotNameResolver) ResolveGroupName(groupID int64) (string, error) {
+	if r == nil {
+		return "", fmt.Errorf("resolver 未初始化")
+	}
+	if name, fresh := r.lookupGroupTitleName(groupID); strings.TrimSpace(name) != "" {
+		if !fresh {
+			r.refreshGroupTitleNameAsync(groupID)
+		}
+		return name, nil
+	}
+	r.refreshGroupTitleNameAsync(groupID)
+	return "", fmt.Errorf("群名称缓存未命中")
 }
 
 func (r *oneBotNameResolver) ObserveMessage(msg *core.OneBotMessage) {
@@ -274,6 +292,16 @@ func (r *oneBotNameResolver) lookupGroupName(key groupMemberKey) (string, bool) 
 	return entry.Value, time.Since(entry.UpdatedAt) <= nameCacheTTL
 }
 
+func (r *oneBotNameResolver) lookupGroupTitleName(groupID int64) (string, bool) {
+	r.mu.RLock()
+	entry, ok := r.groupTitleNames[groupID]
+	r.mu.RUnlock()
+	if !ok || strings.TrimSpace(entry.Value) == "" {
+		return "", false
+	}
+	return entry.Value, time.Since(entry.UpdatedAt) <= nameCacheTTL
+}
+
 func (r *oneBotNameResolver) lookupPrivateName(userID int64) (string, bool) {
 	r.mu.RLock()
 	entry, ok := r.privateNames[userID]
@@ -291,6 +319,16 @@ func (r *oneBotNameResolver) storeGroupName(key groupMemberKey, name string) {
 	}
 	r.mu.Lock()
 	r.groupNames[key] = cachedName{Value: name, UpdatedAt: time.Now()}
+	r.mu.Unlock()
+}
+
+func (r *oneBotNameResolver) storeGroupTitleName(groupID int64, name string) {
+	name = strings.TrimSpace(name)
+	if groupID <= 0 || name == "" {
+		return
+	}
+	r.mu.Lock()
+	r.groupTitleNames[groupID] = cachedName{Value: name, UpdatedAt: time.Now()}
 	r.mu.Unlock()
 }
 
@@ -344,6 +382,37 @@ func (r *oneBotNameResolver) refreshGroupMemberNameAsync(key groupMemberKey) {
 	}()
 }
 
+func (r *oneBotNameResolver) refreshGroupTitleNameAsync(groupID int64) {
+	if r == nil || r.server == nil || r.server.Conn == nil || groupID <= 0 {
+		return
+	}
+	r.mu.Lock()
+	if _, ok := r.groupTitleLoading[groupID]; ok {
+		r.mu.Unlock()
+		return
+	}
+	r.groupTitleLoading[groupID] = struct{}{}
+	r.mu.Unlock()
+
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			delete(r.groupTitleLoading, groupID)
+			r.mu.Unlock()
+		}()
+		resp, err := r.server.CallAPI("get_group_info", map[string]interface{}{
+			"group_id": groupID,
+			"no_cache": true,
+		}, 3*time.Second)
+		if err != nil {
+			return
+		}
+		data, _ := resp["data"].(map[string]interface{})
+		name, _ := data["group_name"].(string)
+		r.storeGroupTitleName(groupID, name)
+	}()
+}
+
 func (r *oneBotNameResolver) refreshPrivateNameAsync(userID int64) {
 	if r == nil || r.server == nil || r.server.Conn == nil || userID <= 0 {
 		return
@@ -391,10 +460,17 @@ func (r *oneBotNameResolver) ResolveGroupMemberNameSync(groupID, userID int64) (
 	data, _ := resp["data"].(map[string]interface{})
 	card, _ := data["card"].(string)
 	if strings.TrimSpace(card) != "" {
-		return strings.TrimSpace(card), nil
+		name := strings.TrimSpace(card)
+		r.storeGroupName(groupMemberKey{GroupID: groupID, UserID: userID}, name)
+		return name, nil
 	}
 	nickname, _ := data["nickname"].(string)
-	return strings.TrimSpace(nickname), nil
+	name := strings.TrimSpace(nickname)
+	if name != "" {
+		r.storeGroupName(groupMemberKey{GroupID: groupID, UserID: userID}, name)
+		r.storePrivateName(userID, name)
+	}
+	return name, nil
 }
 
 func (r *oneBotNameResolver) ResolvePrivateNameSync(userID int64) (string, error) {
@@ -411,7 +487,32 @@ func (r *oneBotNameResolver) ResolvePrivateNameSync(userID int64) (string, error
 	}
 	data, _ := resp["data"].(map[string]interface{})
 	nickname, _ := data["nickname"].(string)
-	return strings.TrimSpace(nickname), nil
+	name := strings.TrimSpace(nickname)
+	if name != "" {
+		r.storePrivateName(userID, name)
+	}
+	return name, nil
+}
+
+func (r *oneBotNameResolver) ResolveGroupNameSync(groupID int64) (string, error) {
+	if r.server == nil || r.server.Conn == nil {
+		return "", fmt.Errorf("onebot 未连接")
+	}
+
+	resp, err := r.server.CallAPI("get_group_info", map[string]interface{}{
+		"group_id": groupID,
+		"no_cache": true,
+	}, 3*time.Second)
+	if err != nil {
+		return "", err
+	}
+	data, _ := resp["data"].(map[string]interface{})
+	groupName, _ := data["group_name"].(string)
+	name := strings.TrimSpace(groupName)
+	if name != "" {
+		r.storeGroupTitleName(groupID, name)
+	}
+	return name, nil
 }
 
 type moduleFilter struct {

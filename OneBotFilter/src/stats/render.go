@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	_ "image/gif"
+	_ "image/jpeg"
 	"image/png"
 	"math"
+	rand "math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,9 +21,11 @@ import (
 
 type RankRow struct {
 	Index   int
+	UserID  int64
 	Name    string
 	Count   int64
 	Percent float64
+	Avatar  []byte
 }
 
 type RenderRankInput struct {
@@ -35,6 +40,7 @@ type RenderStatsInput struct {
 	Title             string
 	SessionName       string
 	RangeLabel        string
+	SessionAvatar     []byte
 	RecvCount         int64
 	SendCount         int64
 	BotSendCount      int64
@@ -46,6 +52,7 @@ type GlobalStatsRow struct {
 	SessionName string
 	TotalCount  int64
 	BotCounts   []int64
+	Avatar      []byte
 }
 
 type RenderGlobalStatsInput struct {
@@ -74,19 +81,11 @@ type fontBundle struct {
 }
 
 func RenderRankImage(fontPath string, input RenderRankInput) ([]byte, error) {
-	return renderCardImage(
-		fontPath,
-		input.Title,
-		input.SessionName,
-		input.RangeLabel,
-		fmt.Sprintf("总消息数：%d", input.TotalCount),
-		input.Rows,
-	)
+	return renderRankCardImage(fontPath, input)
 }
 
 func RenderStatsImage(fontPath string, input RenderStatsInput) ([]byte, error) {
-	subtitle := fmt.Sprintf("接收 %d / 发送 %d / bot %d / 内部 %d", input.RecvCount, input.SendCount, input.BotSendCount, input.InternalSendCount)
-	return renderCardImage(fontPath, input.Title, input.SessionName, input.RangeLabel, subtitle, input.Rows)
+	return renderStatsCardImage(fontPath, input)
 }
 
 func RenderGlobalStatsImage(fontPath string, input RenderGlobalStatsInput) ([]byte, error) {
@@ -99,7 +98,7 @@ func RenderGlobalStatsImage(fontPath string, input RenderGlobalStatsInput) ([]by
 		width       = 1320
 		headerH     = 250
 		padding     = 32
-		rowHeight   = 62
+		rowHeight   = 68
 		headerColor = 32
 	)
 
@@ -113,25 +112,21 @@ func RenderGlobalStatsImage(fontPath string, input RenderGlobalStatsInput) ([]by
 
 	height := int(float64(headerH+padding+padding) + rowHeight*float64(maxInt(2, len(input.Rows)+1)))
 	dc := gg.NewContext(width, height)
-	bgTop := color.RGBA{18, 24, 43, 255}
-	bgBottom := color.RGBA{12, 39, 68, 255}
-	for y := 0; y < height; y++ {
-		t := float64(y) / float64(height)
-		r := lerp(float64(bgTop.R), float64(bgBottom.R), t)
-		g := lerp(float64(bgTop.G), float64(bgBottom.G), t)
-		b := lerp(float64(bgTop.B), float64(bgBottom.B), t)
-		dc.SetRGB255(int(r), int(g), int(b))
-		dc.DrawLine(0, float64(y), width, float64(y))
-		dc.Stroke()
-	}
+	drawStarryBackground(dc)
 
+	dc.SetRGBA255(255, 255, 255, 18)
+	dc.DrawRoundedRectangle(float64(padding), 28, float64(width-padding*2), 170, 24)
+	dc.Fill()
 	setColor(dc, 245, 248, 255)
-	drawTextLeft(dc, fonts.title, input.Title, float64(padding), 52)
-	setColor(dc, 210, 220, 240)
-	drawTextLeft(dc, fonts.body, input.SessionName, float64(padding), 96)
-	drawTextLeft(dc, fonts.meta, input.RangeLabel, float64(padding), 126)
-	drawTextLeft(dc, fonts.meta, fmt.Sprintf("接收 %d / 发送 %d / bot %d / 内部 %d", input.RecvCount, input.SendCount, input.BotSendCount, input.InternalSendCount), float64(padding), 156)
-	drawTextLeft(dc, fonts.meta, buildBotSummaryLine(input.BotNames, input.BotSummary), float64(padding), 184)
+	drawTextLeft(dc, fonts.title, input.Title, float64(padding+24), 62)
+	setColor(dc, 232, 238, 250)
+	drawTextLeft(dc, fonts.body, input.SessionName, float64(padding+24), 104)
+	setColor(dc, 222, 230, 246)
+	drawTextLeft(dc, fonts.meta, input.RangeLabel, float64(padding+24), 134)
+	setColor(dc, 236, 242, 252)
+	drawTextLeft(dc, fonts.meta, fmt.Sprintf("接收 %d / 发送 %d / bot %d / 内部 %d", input.RecvCount, input.SendCount, input.BotSendCount, input.InternalSendCount), float64(padding+24), 164)
+	setColor(dc, 228, 236, 250)
+	drawTextLeft(dc, fonts.meta, buildBotSummaryLine(input.BotNames, input.BotSummary), float64(padding+24), 190)
 
 	tableTop := float64(headerH)
 	tableWidth := float64(width - padding*2)
@@ -140,13 +135,13 @@ func RenderGlobalStatsImage(fontPath string, input RenderGlobalStatsInput) ([]by
 	dc.Fill()
 
 	x := float64(padding)
-	setColor(dc, 210, 220, 240)
-	drawTableCell(dc, fonts.body, "会话", x+16, tableTop+38, sessionColW-32, false)
+	setColor(dc, 234, 240, 252)
+	drawTableCell(dc, fonts.body, "会话", x+16, tableTop+43, sessionColW-32, false)
 	x += sessionColW
-	drawTableCell(dc, fonts.body, "总计", x+16, tableTop+38, otherColW-32, true)
+	drawTableCell(dc, fonts.body, "总计", x+16, tableTop+43, otherColW-32, true)
 	x += otherColW
 	for _, botName := range input.BotNames {
-		drawTableCell(dc, fonts.body, botName, x+16, tableTop+38, otherColW-32, true)
+		drawTableCell(dc, fonts.body, botName, x+16, tableTop+43, otherColW-32, true)
 		x += otherColW
 	}
 
@@ -161,13 +156,19 @@ func RenderGlobalStatsImage(fontPath string, input RenderGlobalStatsInput) ([]by
 		dc.Fill()
 
 		x = float64(padding)
-		setColor(dc, 235, 240, 250)
-		drawTableCell(dc, fonts.meta, row.SessionName, x+16, top+34, sessionColW-32, false)
+		setColor(dc, 255, 255, 255)
+		if row.Avatar != nil {
+			dc.SetFontFace(fonts.body.primary)
+			drawCircularAvatar(dc, row.Avatar, x+12, top+8, 42, sessionAvatarLabel(row.SessionName))
+			drawTableCell(dc, fonts.body, row.SessionName, x+62, top+42, sessionColW-78, false)
+		} else {
+			drawTableCell(dc, fonts.body, row.SessionName, x+16, top+42, sessionColW-32, false)
+		}
 		x += sessionColW
-		drawTableCell(dc, fonts.meta, fmt.Sprintf("%d", row.TotalCount), x+16, top+34, otherColW-32, true)
+		drawTableCell(dc, fonts.body, fmt.Sprintf("%d", row.TotalCount), x+16, top+42, otherColW-32, true)
 		x += otherColW
 		for _, count := range row.BotCounts {
-			drawTableCell(dc, fonts.meta, fmt.Sprintf("%d", count), x+16, top+34, otherColW-32, true)
+			drawTableCell(dc, fonts.body, fmt.Sprintf("%d", count), x+16, top+42, otherColW-32, true)
 			x += otherColW
 		}
 	}
@@ -179,13 +180,14 @@ func RenderGlobalStatsImage(fontPath string, input RenderGlobalStatsInput) ([]by
 	return buf.Bytes(), nil
 }
 
-func renderCardImage(fontPath, title, sessionName, rangeLabel, subtitle string, rows []RankRow) ([]byte, error) {
+func renderRankCardImage(fontPath string, input RenderRankInput) ([]byte, error) {
 	const (
 		width      = 1080
-		headerH    = 190
-		rowHeight  = 112
+		headerH    = 210
+		rowHeight  = 132
 		padding    = 40
 		cardRadius = 14
+		avatarSize = 78
 	)
 
 	fonts, err := loadFonts(fontPath)
@@ -193,60 +195,158 @@ func renderCardImage(fontPath, title, sessionName, rangeLabel, subtitle string, 
 		return nil, err
 	}
 
-	height := headerH + padding + maxInt(1, len(rows))*rowHeight + padding
+	height := headerH + padding + maxInt(1, len(input.Rows))*rowHeight + padding
 	dc := gg.NewContext(width, height)
+	drawStarryBackground(dc)
 
-	bgTop := color.RGBA{18, 24, 43, 255}
-	bgBottom := color.RGBA{12, 39, 68, 255}
-	for y := 0; y < height; y++ {
-		t := float64(y) / float64(height)
-		r := lerp(float64(bgTop.R), float64(bgBottom.R), t)
-		g := lerp(float64(bgTop.G), float64(bgBottom.G), t)
-		b := lerp(float64(bgTop.B), float64(bgBottom.B), t)
-		dc.SetRGB255(int(r), int(g), int(b))
-		dc.DrawLine(0, float64(y), width, float64(y))
-		dc.Stroke()
-	}
-
+	dc.SetRGBA255(255, 255, 255, 20)
+	dc.DrawRoundedRectangle(float64(padding), 28, float64(width-padding*2), 138, 22)
+	dc.Fill()
 	setColor(dc, 245, 248, 255)
-	drawTextLeft(dc, fonts.title, title, float64(padding), 52)
+	drawTextLeft(dc, fonts.title, input.Title, float64(padding+24), 70)
 	setColor(dc, 210, 220, 240)
-	drawTextLeft(dc, fonts.body, sessionName, float64(padding), 96)
-	drawTextLeft(dc, fonts.meta, rangeLabel, float64(padding), 126)
-	drawTextLeft(dc, fonts.meta, subtitle, float64(padding), 156)
+	drawTextLeft(dc, fonts.body, input.SessionName, float64(padding+24), 112)
+	drawTextLeft(dc, fonts.meta, input.RangeLabel, float64(padding+24), 144)
+	drawMetricPill(dc, fonts.meta, fmt.Sprintf("总消息 %d", input.TotalCount), float64(width-238), 54, 170, 40)
 
 	startY := float64(headerH)
 	cardWidth := float64(width - padding*2)
-	barX := float64(padding + 90)
-	barW := float64(width - padding*2 - 180)
-	nameMaxWidth := float64(width - padding*2 - 320)
+	barX := float64(padding + 126)
+	barW := float64(width - padding*2 - 286)
+	nameMaxWidth := float64(width - padding*2 - 420)
 
-	for i, row := range rows {
+	if len(input.Rows) == 0 {
+		setColor(dc, 220, 226, 240)
+		drawTextLeft(dc, fonts.body, "暂无数据", float64(padding+24), startY+58)
+	}
+
+	for i, row := range input.Rows {
 		top := startY + float64(i*rowHeight)
-		dc.SetRGBA255(255, 255, 255, 22)
+		alpha := 24
+		if i < 3 {
+			alpha = 34
+		}
+		dc.SetRGBA255(255, 255, 255, alpha)
 		dc.DrawRoundedRectangle(float64(padding), top, cardWidth, rowHeight-14, cardRadius)
 		dc.Fill()
 
-		indexY := top + 30
-		nameY := top + 32
-		barY := top + 66
+		avatarX := float64(padding + 22)
+		avatarY := top + 20
+		dc.SetFontFace(fonts.body.primary)
+		drawCircularAvatar(dc, row.Avatar, avatarX, avatarY, avatarSize, rankAvatarLabel(row))
 
+		nameY := top + 38
+		qqY := top + 70
+		barY := top + 91
+		indexX := float64(width - 210)
+
+		setRankColor(dc, row.Index)
+		drawTextLeft(dc, fonts.body, fmt.Sprintf("#%d", row.Index), indexX, nameY)
 		setColor(dc, 255, 255, 255)
-		drawTextLeft(dc, fonts.body, fmt.Sprintf("#%d", row.Index), float64(padding+24), indexY)
 		nameText := ellipsizeText(dc, fonts.body, row.Name, nameMaxWidth)
-		drawTextLeft(dc, fonts.body, nameText, float64(padding+90), nameY)
+		drawTextLeft(dc, fonts.body, nameText, float64(padding+126), nameY)
+		setColor(dc, 178, 190, 215)
+		qqText := "QQ " + formatID(row.UserID)
+		drawTextLeft(dc, fonts.meta, qqText, float64(padding+126), qqY)
 
 		setColor(dc, 205, 216, 238)
-		drawTextRight(dc, fonts.meta, fmt.Sprintf("%d", row.Count), float64(width-180), nameY)
-		drawTextRight(dc, fonts.meta, fmt.Sprintf("%.1f%%", row.Percent), float64(width-80), nameY)
+		drawTextRight(dc, fonts.body, fmt.Sprintf("%d", row.Count), float64(width-78), nameY)
+		drawTextRight(dc, fonts.meta, fmt.Sprintf("%.1f%%", row.Percent), float64(width-78), qqY)
 
 		dc.SetRGBA255(255, 255, 255, 26)
 		dc.DrawRoundedRectangle(barX, barY, barW, 12, 6)
 		dc.Fill()
 
 		progress := math.Max(0, math.Min(1, row.Percent/100))
-		dc.SetRGBA255(120, 166, 255, 210)
+		setProgressColor(dc, row.Index)
 		dc.DrawRoundedRectangle(barX, barY, math.Max(10, barW*progress), 12, 6)
+		dc.Fill()
+	}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, dc.Image()); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func renderStatsCardImage(fontPath string, input RenderStatsInput) ([]byte, error) {
+	const (
+		width      = 1080
+		headerH    = 250
+		rowHeight  = 112
+		padding    = 40
+		avatarSize = 92
+	)
+
+	fonts, err := loadFonts(fontPath)
+	if err != nil {
+		return nil, err
+	}
+
+	height := headerH + padding + maxInt(1, len(input.Rows))*rowHeight + padding
+	dc := gg.NewContext(width, height)
+	drawStarryBackground(dc)
+
+	dc.SetRGBA255(255, 255, 255, 22)
+	dc.DrawRoundedRectangle(float64(padding), 28, float64(width-padding*2), 176, 24)
+	dc.Fill()
+	dc.SetFontFace(fonts.body.primary)
+	drawCircularAvatar(dc, input.SessionAvatar, float64(padding+24), 56, avatarSize, "群")
+
+	textX := float64(padding + 136)
+	setColor(dc, 245, 248, 255)
+	drawTextLeft(dc, fonts.title, input.Title, textX, 72)
+	setColor(dc, 232, 238, 250)
+	drawTextLeft(dc, fonts.body, input.SessionName, textX, 116)
+	setColor(dc, 222, 230, 246)
+	drawTextLeft(dc, fonts.meta, input.RangeLabel, textX, 148)
+
+	metricTop := 164.0
+	metricW := 168.0
+	drawMetricPill(dc, fonts.meta, fmt.Sprintf("接收 %d", input.RecvCount), textX, metricTop, metricW, 36)
+	drawMetricPill(dc, fonts.meta, fmt.Sprintf("发送 %d", input.SendCount), textX+metricW+12, metricTop, metricW, 36)
+	drawMetricPill(dc, fonts.meta, fmt.Sprintf("bot %d", input.BotSendCount), textX+(metricW+12)*2, metricTop, metricW, 36)
+	drawMetricPill(dc, fonts.meta, fmt.Sprintf("内部 %d", input.InternalSendCount), textX+(metricW+12)*3, metricTop, metricW, 36)
+
+	startY := float64(headerH)
+	cardWidth := float64(width - padding*2)
+	maxCount := int64(1)
+	for _, row := range input.Rows {
+		if row.Count > maxCount {
+			maxCount = row.Count
+		}
+	}
+	if len(input.Rows) == 0 {
+		setColor(dc, 220, 226, 240)
+		drawTextLeft(dc, fonts.body, "暂无 bot 发送记录", float64(padding+24), startY+58)
+	}
+	for i, row := range input.Rows {
+		top := startY + float64(i*rowHeight)
+		dc.SetRGBA255(255, 255, 255, 24)
+		dc.DrawRoundedRectangle(float64(padding), top, cardWidth, rowHeight-14, 16)
+		dc.Fill()
+
+		textLeft := float64(padding + 28)
+		nameText := ellipsizeText(dc, fonts.body, row.Name, 520)
+		setColor(dc, 248, 250, 255)
+		drawTextLeft(dc, fonts.body, nameText, textLeft, top+40)
+		setColor(dc, 220, 228, 244)
+		drawTextLeft(dc, fonts.meta, "下游 bot-app 发送", textLeft, top+72)
+		setColor(dc, 240, 245, 255)
+		drawTextRight(dc, fonts.body, fmt.Sprintf("%d", row.Count), float64(width-78), top+42)
+		setColor(dc, 228, 236, 250)
+		drawTextRight(dc, fonts.meta, fmt.Sprintf("%.1f%%", row.Percent), float64(width-78), top+74)
+
+		barX := textLeft
+		barY := top + 88
+		barW := float64(width - padding*2 - 174)
+		dc.SetRGBA255(255, 255, 255, 26)
+		dc.DrawRoundedRectangle(barX, barY, barW, 10, 5)
+		dc.Fill()
+		progress := float64(row.Count) / float64(maxCount)
+		setProgressColor(dc, row.Index)
+		dc.DrawRoundedRectangle(barX, barY, math.Max(10, barW*progress), 10, 5)
 		dc.Fill()
 	}
 
@@ -418,6 +518,168 @@ func loadEmojiImage(assetDir, text string) (image.Image, bool) {
 		return img, true
 	}
 	return nil, false
+}
+
+func drawStarryBackground(dc *gg.Context) {
+	width := dc.Width()
+	height := dc.Height()
+	bgTop := color.RGBA{16, 18, 48, 255}
+	bgBottom := color.RGBA{11, 32, 62, 255}
+	for y := 0; y < height; y++ {
+		t := float64(y) / float64(maxInt(1, height))
+		r := lerp(float64(bgTop.R), float64(bgBottom.R), t)
+		g := lerp(float64(bgTop.G), float64(bgBottom.G), t)
+		b := lerp(float64(bgTop.B), float64(bgBottom.B), t)
+		dc.SetRGB255(int(r), int(g), int(b))
+		dc.DrawLine(0, float64(y), float64(width), float64(y))
+		dc.Stroke()
+	}
+
+	seed := int64(width*73856093 ^ height*19349663)
+	rng := rand.New(rand.NewSource(seed))
+	starCount := width * height / 9000
+	if starCount < 60 {
+		starCount = 60
+	}
+	if starCount > 260 {
+		starCount = 260
+	}
+	for i := 0; i < starCount; i++ {
+		x := rng.Float64() * float64(width)
+		y := rng.Float64() * float64(height)
+		radius := 0.35 + rng.Float64()*1.3
+		alpha := 0.22 + rng.Float64()*0.45
+		dc.SetRGBA(1, 1, 1, alpha)
+		dc.DrawCircle(x, y, radius)
+		dc.Fill()
+	}
+
+	dc.SetRGBA(0, 0, 0, 0.14)
+	dc.DrawRectangle(0, 0, float64(width), float64(height))
+	dc.Fill()
+}
+
+func drawCircularAvatar(dc *gg.Context, data []byte, x, y float64, size int, fallback string) {
+	dc.Push()
+	defer dc.Pop()
+	if img := decodeImageBytes(data); img != nil {
+		drawCircularImage(dc, img, x, y, float64(size))
+		return
+	}
+	drawAvatarPlaceholder(dc, x, y, float64(size), fallback)
+}
+
+func decodeImageBytes(data []byte) image.Image {
+	if len(data) == 0 {
+		return nil
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil
+	}
+	return img
+}
+
+func drawCircularImage(dc *gg.Context, img image.Image, x, y, size float64) {
+	bounds := img.Bounds()
+	w := float64(bounds.Dx())
+	h := float64(bounds.Dy())
+	if w <= 0 || h <= 0 {
+		return
+	}
+
+	scale := size / math.Min(w, h)
+	drawW := w * scale
+	drawH := h * scale
+	dc.Push()
+	dc.DrawCircle(x+size/2, y+size/2, size/2)
+	dc.Clip()
+	dc.Translate(x-(drawW-size)/2, y-(drawH-size)/2)
+	dc.Scale(scale, scale)
+	dc.DrawImage(img, -bounds.Min.X, -bounds.Min.Y)
+	dc.ResetClip()
+	dc.Pop()
+
+	dc.SetRGBA255(255, 255, 255, 60)
+	dc.SetLineWidth(2)
+	dc.DrawCircle(x+size/2, y+size/2, size/2-1)
+	dc.Stroke()
+}
+
+func drawAvatarPlaceholder(dc *gg.Context, x, y, size float64, fallback string) {
+	dc.SetRGBA255(255, 255, 255, 28)
+	dc.DrawCircle(x+size/2, y+size/2, size/2)
+	dc.Fill()
+	dc.SetRGBA255(255, 255, 255, 70)
+	dc.SetLineWidth(2)
+	dc.DrawCircle(x+size/2, y+size/2, size/2-1)
+	dc.Stroke()
+
+	fallback = strings.TrimSpace(fallback)
+	if fallback == "" {
+		fallback = "?"
+	}
+	runes := []rune(fallback)
+	if len(runes) > 1 {
+		fallback = string(runes[:1])
+	}
+	dc.SetRGB255(230, 236, 250)
+	dc.DrawStringAnchored(fallback, x+size/2, y+size/2+size*0.16, 0.5, 0.5)
+}
+
+func drawMetricPill(dc *gg.Context, pair fontPair, text string, x, y, w, h float64) {
+	dc.SetRGBA255(255, 255, 255, 26)
+	dc.DrawRoundedRectangle(x, y, w, h, h/2)
+	dc.Fill()
+	setColor(dc, 236, 242, 252)
+	drawTextLeft(dc, pair, ellipsizeText(dc, pair, text, w-28), x+14, y+h/2+pair.size*0.34)
+}
+
+func setRankColor(dc *gg.Context, index int) {
+	switch index {
+	case 1:
+		dc.SetRGB255(255, 220, 128)
+	case 2:
+		dc.SetRGB255(210, 225, 245)
+	case 3:
+		dc.SetRGB255(230, 176, 128)
+	default:
+		dc.SetRGB255(205, 216, 238)
+	}
+}
+
+func setProgressColor(dc *gg.Context, index int) {
+	switch index {
+	case 1:
+		dc.SetRGBA255(255, 198, 98, 225)
+	case 2:
+		dc.SetRGBA255(138, 185, 255, 218)
+	case 3:
+		dc.SetRGBA255(190, 133, 255, 212)
+	default:
+		dc.SetRGBA255(120, 166, 255, 205)
+	}
+}
+
+func rankAvatarLabel(row RankRow) string {
+	if strings.TrimSpace(row.Name) != "" {
+		return row.Name
+	}
+	return formatID(row.UserID)
+}
+
+func sessionAvatarLabel(sessionName string) string {
+	if strings.Contains(sessionName, "私聊") {
+		return "私"
+	}
+	return "群"
+}
+
+func formatID(id int64) string {
+	if id <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d", id)
 }
 
 func drawEmojiImage(dc *gg.Context, img image.Image, x, y, size float64) {
