@@ -24,6 +24,7 @@ from .gacha import (
     parse_search_gacha_args,
     compose_gacha_spin_image,
     SINGLE_GACHA_HELP,
+    extract_gacha_pickup_card_ids,
 )
 from PIL.Image import Transpose
 from PIL import ImageOps
@@ -871,9 +872,12 @@ async def _(ctx: SekaiHandlerContext):
 
 
 # 模拟抽卡
-pjsk_spin_gacha = SekaiCmdHandler([
-    "/单抽", "/十连", *[f"/{x}连" for x in (10, 50, 100, 150, 200)],
-])
+PJSK_SPIN_GACHA_COMMANDS = [
+    "/单抽", "/1连", "/十连",
+    *[f"/{x}连" for x in range(2, 11)],
+    *[f"/{x}连" for x in range(20, 401, 10)],
+]
+pjsk_spin_gacha = SekaiCmdHandler(PJSK_SPIN_GACHA_COMMANDS)
 pjsk_spin_gacha.check_cdrate(cd).check_wblist(gbl)
 @pjsk_spin_gacha.handle()
 async def _(ctx: SekaiHandlerContext):
@@ -881,9 +885,8 @@ async def _(ctx: SekaiHandlerContext):
     check_user_entertainment_limit(ctx, 'gacha')
 
     args = ctx.get_args().strip()
-    if not args:
-        args = "-1"
-    gacha = await parse_search_gacha_args(ctx, args)
+    gacha_args, pickup_ids = extract_gacha_pickup_card_ids(args)
+    gacha = await parse_search_gacha_args(ctx, gacha_args or "-1")
     assert_and_reply(gacha, f"参数错误，{SINGLE_GACHA_HELP}")
 
     if "单抽" in ctx.trigger_cmd:
@@ -893,7 +896,7 @@ async def _(ctx: SekaiHandlerContext):
     else:
         count = int(ctx.trigger_cmd.split("连")[0][1:])
 
-    cards = await spin_gacha(ctx, gacha, count)
+    cards = await spin_gacha(ctx, gacha, count, pickup_ids)
     
     # 成功抽卡后才记录使用
     record_user_entertainment_usage(ctx, 'gacha')

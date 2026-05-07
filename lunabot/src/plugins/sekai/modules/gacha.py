@@ -24,6 +24,7 @@ SINGLE_GACHA_HELP = """
 123: 直接使用卡池编号
 -2: 倒数第二个卡池
 event123: 活动123对应的卡池
+#348 #349: 梦想精选等卡池可追加自选卡牌id
 """.strip()
 MULTI_GACHA_HELP = """
 多个卡池参数:
@@ -36,13 +37,356 @@ card123: 查包含指定卡牌123的卡池
 
 RERELEASE_KEYWORDS = ("[It's Back]", "[재등장]", "[复刻]", "[復刻]",)
 ECHO_KEYWORDS = ("[回响]",)
+
+
+# ======================= 抽卡纯逻辑 ======================= #
+
+from dataclasses import dataclass, field
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+import re
+
+GACHA_RATE_RARITIES = ['rarity_1', 'rarity_2', 'rarity_3', 'rarity_4', 'rarity_birthday']
+SPIN_GRID_RARITY_ORDER = ['pickup', 'rarity_birthday', 'rarity_4', 'rarity_3', 'rarity_2', 'rarity_1']
+
+
+@dataclass(frozen=True)
+class SimGachaBehavior:
+    type: str
+    spin_count: int
+
+
+@dataclass(frozen=True)
+class SimGachaCard:
+    id: int
+    rarity: str
+    weight: int
+    is_wish: bool = False
+    is_pickup: bool = False
+    wish_type: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SimGachaRateEntry:
+    rarity: str
+    rate: float
+    lottery_type: str
+
+
+@dataclass(frozen=True)
+class SimGacha:
+    rarity_rates: List[SimGachaRateEntry]
+    behaviors: List[SimGachaBehavior]
+    cards: List[SimGachaCard]
+    wish_select_count: int = 0
+    wish_fixed_select_count: int = 0
+    wish_limited_select_count: int = 0
+
+
+@dataclass
+class SimCardWeightInfo:
+    id: int
+    rarity: str
+    weight: int
+    is_pickup: bool
+    rate: float = 0.0
+    guaranteed_rate: float = 0.0
+
+
+@dataclass
+class SimWeightInfo:
+    weights: Dict[str, int] = field(default_factory=dict)
+    cards: Dict[str, List[SimCardWeightInfo]] = field(default_factory=dict)
+    rates: Dict[str, float] = field(default_factory=dict)
+    guaranteed_rates: Dict[str, float] = field(default_factory=dict)
+    guaranteed_type: Optional[str] = None
+    guaranteed_rarities: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SimSpinResult:
+    id: int
+    rarity: str
+    is_pickup: bool
+    draw_index: int
+
+
+@dataclass(frozen=True)
+class SpinGridCardItem:
+    id: int
+    label: str
+    draw_index: int
+    is_pickup: bool
+
+
+@dataclass(frozen=True)
+class SpinGridSummaryItem:
+    text: str
+
+
+def get_spin_grid_card_label(card: SimSpinResult) -> str:
+    return f"{card.draw_index}抽" if card.rarity == 'rarity_4' else ""
+
+
+def get_spin_grid_badge_texts(item: SpinGridCardItem) -> Tuple[Optional[str], Optional[str]]:
+    if not item.label:
+        return None, None
+    return ("UP" if item.is_pickup else "4★"), item.label
+
+
+def validate_spin_count(count: int) -> None:
+    if count < 1 or count > 400:
+        raise ValueError("抽卡次数必须在1到400之间")
+    if count > 10 and count % 10 != 0:
+        raise ValueError("大于10的抽卡次数必须为10的倍数")
+
+
+def extract_gacha_pickup_card_ids(args: str) -> Tuple[str, List[int]]:
+    pickup_ids = [int(match.group(1)) for match in re.finditer(r"#(\d+)", args)]
+    gacha_args = re.sub(r"#\d+", " ", args)
+    return " ".join(gacha_args.split()), pickup_ids
+
+
+def _get_guaranteed_type(behaviors: Iterable[SimGachaBehavior]) -> Tuple[Optional[str], List[str]]:
+    guaranteed_type = None
+    guaranteed_rarities: List[str] = []
+    for behavior in behaviors:
+        if behavior.type == 'over_rarity_4_once':
+            guaranteed_type = 'rarity_4'
+            guaranteed_rarities = ['rarity_4']
+        elif behavior.type == 'over_rarity_3_once':
+            guaranteed_type = 'rarity_3'
+            guaranteed_rarities = ['rarity_3', 'rarity_4', 'rarity_birthday']
+    return guaranteed_type, guaranteed_rarities
+
+
+def _dedupe_keep_order(ids: Iterable[int]) -> List[int]:
+    ret: List[int] = []
+    seen: set[int] = set()
+    for card_id in ids:
+        if card_id in seen:
+            continue
+        seen.add(card_id)
+        ret.append(card_id)
+    return ret
+
+
+def _apply_categorized_wish_rates(
+    gacha: SimGacha,
+    info: SimWeightInfo,
+    selected_pickup_ids: Optional[Sequence[int]],
+    normal_rates: Dict[str, float],
+    categorized_rates: Dict[str, float],
+) -> None:
+    special_rate = categorized_rates.get('rarity_4', 0.0)
+    if special_rate <= 0:
+        return
+
+    rarity_cards = info.cards.get('rarity_4', [])
+    if not rarity_cards:
+        return
+
+    fixed_ids = [
+        card.id
+        for card in gacha.cards
+        if card.rarity == 'rarity_4' and card.is_wish and card.wish_type == 'fixed'
+    ]
+    selectable_ids = {
+        card.id
+        for card in gacha.cards
+        if card.rarity == 'rarity_4' and card.is_wish and card.wish_type != 'fixed'
+    }
+
+    custom_limit = gacha.wish_limited_select_count
+    if custom_limit <= 0:
+        custom_limit = max(gacha.wish_select_count - len(fixed_ids), 0)
+
+    selected_ids = _dedupe_keep_order(selected_pickup_ids or [])
+    invalid_ids = [card_id for card_id in selected_ids if card_id not in selectable_ids]
+    if invalid_ids:
+        raise ValueError(f"指定的卡牌不在该卡池的自选范围内: {', '.join(map(str, invalid_ids))}")
+    selected_ids = selected_ids[:custom_limit]
+
+    slot_count = gacha.wish_select_count or (len(fixed_ids) + custom_limit)
+    if slot_count <= 0:
+        return
+
+    slot_rate = special_rate / slot_count
+    explicit_pickup_ids = set(fixed_ids)
+    explicit_pickup_ids.update(selected_ids)
+
+    normal_four_star_rate = normal_rates.get('rarity_4', 0.0)
+    fallback_four_star_rate = normal_four_star_rate + max(special_rate - slot_rate * len(explicit_pickup_ids), 0.0)
+    ordinary_cards = [card for card in rarity_cards if card.id not in explicit_pickup_ids]
+    ordinary_rate = fallback_four_star_rate / len(ordinary_cards) if ordinary_cards else 0.0
+
+    for card in rarity_cards:
+        card.is_pickup = card.id in explicit_pickup_ids
+        if card.is_pickup:
+            card.rate = slot_rate
+        else:
+            card.rate = ordinary_rate
+
+    info.rates['rarity_4'] = normal_four_star_rate + special_rate
+
+
+def build_gacha_weight_info(gacha: SimGacha, selected_pickup_ids: Optional[Sequence[int]] = None) -> SimWeightInfo:
+    info = SimWeightInfo()
+
+    for card in gacha.cards:
+        info.weights.setdefault(card.rarity, 0)
+        info.weights[card.rarity] += card.weight
+        info.cards.setdefault(card.rarity, []).append(
+            SimCardWeightInfo(
+                id=card.id,
+                rarity=card.rarity,
+                weight=card.weight,
+                is_pickup=card.is_pickup,
+            )
+        )
+
+    info.guaranteed_type, info.guaranteed_rarities = _get_guaranteed_type(gacha.behaviors)
+
+    normal_rates: Dict[str, float] = {}
+    categorized_rates: Dict[str, float] = {}
+    for rate in gacha.rarity_rates:
+        rate_value = rate.rate / 100.0
+        if rate.lottery_type == 'normal':
+            normal_rates[rate.rarity] = normal_rates.get(rate.rarity, 0.0) + rate_value
+        elif rate.lottery_type == 'categorized_wish':
+            categorized_rates[rate.rarity] = categorized_rates.get(rate.rarity, 0.0) + rate_value
+
+    info.rates = dict(normal_rates)
+    for rarity, rate in categorized_rates.items():
+        info.rates[rarity] = info.rates.get(rarity, 0.0) + rate
+
+    for rarity, cards in info.cards.items():
+        total_rate = normal_rates.get(rarity, 0.0)
+        total_weight = info.weights.get(rarity, 0)
+        if total_rate <= 0 or total_weight <= 0:
+            continue
+        for card in cards:
+            card.rate = total_rate * card.weight / total_weight
+
+    _apply_categorized_wish_rates(gacha, info, selected_pickup_ids, normal_rates, categorized_rates)
+
+    if info.guaranteed_type:
+        info.guaranteed_rates = dict(info.rates)
+        if info.guaranteed_type in ('rarity_4', 'rarity_3'):
+            info.guaranteed_rates['rarity_4' if info.guaranteed_type == 'rarity_4' else 'rarity_3'] = (
+                info.guaranteed_rates.get(info.guaranteed_type, 0.0) + info.rates.get('rarity_2', 0.0)
+            )
+            info.guaranteed_rates['rarity_2'] = 0.0
+        if info.guaranteed_type == 'rarity_4':
+            info.guaranteed_rates['rarity_4'] += info.rates.get('rarity_3', 0.0)
+            info.guaranteed_rates['rarity_3'] = 0.0
+        for rarity, cards in info.cards.items():
+            total_rate = info.rates.get(rarity, 0.0)
+            guaranteed_rate = info.guaranteed_rates.get(rarity, 0.0)
+            scale = guaranteed_rate / total_rate if total_rate > 0 else 0.0
+            for card in cards:
+                card.guaranteed_rate = card.rate * scale
+    else:
+        for cards in info.cards.values():
+            for card in cards:
+                card.guaranteed_rate = card.rate
+
+    return info
+
+
+def spin_cards(
+    info: SimWeightInfo,
+    count: int,
+    chooser: Callable[[Sequence[SimCardWeightInfo], Sequence[float]], SimCardWeightInfo],
+) -> List[SimSpinResult]:
+    validate_spin_count(count)
+
+    all_cards: List[SimCardWeightInfo] = []
+    guaranteed_cards: List[SimCardWeightInfo] = []
+    for rarity, cards in info.cards.items():
+        all_cards.extend(cards)
+        if rarity in info.guaranteed_rarities:
+            guaranteed_cards.extend(cards)
+
+    all_weights = [card.rate for card in all_cards]
+    guaranteed_weights = [card.guaranteed_rate for card in guaranteed_cards]
+
+    results: List[SimSpinResult] = []
+    guaranteed_hit = False
+    for draw_index in range(1, count + 1):
+        if (draw_index - 1) % 10 == 0:
+            guaranteed_hit = False
+
+        cards = all_cards
+        weights = all_weights
+        if info.guaranteed_type and draw_index % 10 == 0 and not guaranteed_hit:
+            cards = guaranteed_cards
+            weights = guaranteed_weights
+
+        result = chooser(cards, weights)
+        results.append(
+            SimSpinResult(
+                id=result.id,
+                rarity=result.rarity,
+                is_pickup=result.is_pickup,
+                draw_index=draw_index,
+            )
+        )
+        if result.rarity in info.guaranteed_rarities:
+            guaranteed_hit = True
+
+    return results
+
+
+def build_spin_grid_items(
+    cards: Sequence[SimSpinResult],
+    show_num_by_rarity: Optional[Dict[str, int]] = None,
+) -> List[Union[SpinGridCardItem, SpinGridSummaryItem]]:
+    show_num_by_rarity = show_num_by_rarity or {}
+    count = len(cards)
+    if count <= 10:
+        return [
+            SpinGridCardItem(
+                id=card.id,
+                label=get_spin_grid_card_label(card),
+                draw_index=card.draw_index,
+                is_pickup=card.is_pickup,
+            )
+            for card in sorted(cards, key=lambda card: card.draw_index)
+        ]
+
+    rarity_cards: Dict[str, List[SimSpinResult]] = {}
+    for card in cards:
+        rarity_cards.setdefault(card.rarity, []).append(card)
+
+    items: List[Union[SpinGridCardItem, SpinGridSummaryItem]] = []
+    for rarity in SPIN_GRID_RARITY_ORDER:
+        grouped_cards = sorted(rarity_cards.get(rarity, []), key=lambda card: card.draw_index)
+        if not grouped_cards:
+            continue
+        show_num = show_num_by_rarity.get(rarity, 100)
+        for card in grouped_cards[:show_num]:
+            items.append(
+                SpinGridCardItem(
+                    id=card.id,
+                    label=get_spin_grid_card_label(card),
+                    draw_index=card.draw_index,
+                    is_pickup=card.is_pickup,
+                )
+            )
+        if len(grouped_cards) > show_num:
+            items.append(SpinGridSummaryItem(text=f"...等\n共{len(grouped_cards)}张"))
+
+    return items
+
+
+# ======================= 处理逻辑 ======================= #
+
 GACHA_TYPE_NAMES = {
     'beginner': '新手',
     'normal': '一般',
     'ceil': '天井',
     'gift': '礼物',
 }
-GACHA_RATE_RARITIES = ['rarity_1', 'rarity_2', 'rarity_3', 'rarity_4', 'rarity_birthday']
 GACHA_RARE_NAMES = {
     'rarity_1': '1星',
     'rarity_2': '2星',
@@ -70,6 +414,7 @@ class GachaCard:
     weight: int
     is_wish: bool
     is_pickup: bool
+    wish_type: Optional[str] = None
 
 @dataclass
 class GachaCardRarityRate:
@@ -88,6 +433,9 @@ class Gacha:
     end_at: datetime
     asset_name: str
     ceilitem_id: Optional[int]
+    wish_select_count: int = 0
+    wish_fixed_select_count: int = 0
+    wish_limited_select_count: int = 0
     rarity_rates: List[GachaCardRarityRate] = field(default_factory=list)
     behaviors: List[GachaBehavior] = field(default_factory=list)
     cards: List[GachaCard] = field(default_factory=list)
@@ -133,6 +481,7 @@ class GachaSpinResult:
     id: int
     rarity: str
     is_pickup: bool
+    draw_index: int
 
 
 # ======================= 处理逻辑 ======================= #
@@ -151,6 +500,9 @@ def gachas_map_fn(gachas):
             end_at=datetime.fromtimestamp(item['endAt'] // 1000 + 1),
             asset_name=item['assetbundleName'],
             ceilitem_id=item.get('gachaCeilItemId'),
+            wish_select_count=item.get('wishSelectCount', 0),
+            wish_fixed_select_count=item.get('wishFixedSelectCount', 0),
+            wish_limited_select_count=item.get('wishLimitedSelectCount', 0),
         )
         for rate in item['gachaCardRarityRates']:
             g.rarity_rates.append(GachaCardRarityRate(
@@ -178,6 +530,7 @@ def gachas_map_fn(gachas):
                 weight=card['weight'],
                 is_wish=card.get('isWish', False),
                 is_pickup=card['cardId'] in pickup_ids,
+                wish_type=card.get('gachaDetailWishType'),
             ))
         ret.append(g)
     return ret
@@ -229,48 +582,63 @@ async def get_gacha_logo(ctx: SekaiHandlerContext, gacha_or_gacha_id: Union[Gach
     return await ctx.rip.img(f"gacha/{gacha.asset_name}/logo/logo.png", use_img_cache=True, default=default)
 
 # 获取卡池抽卡权重信息
-async def get_gacha_weight_info(ctx: SekaiHandlerContext, gacha: Gacha) -> GachaWeightInfo:
-    ret = GachaWeightInfo()
-    for card in gacha.cards:
-        rarity = (await ctx.md.cards.find_by_id(card.id))["cardRarityType"]
-        info = GachaCardWeightInfo(
-            id=card.id, 
-            rarity=rarity,
-            weight=card.weight,
-            is_pickup=card.is_pickup,
-        )
-        ret.weights.setdefault(rarity, 0)
-        ret.weights[rarity] += card.weight
-        ret.cards.setdefault(rarity, []).append(info)
-    # 保底类型
-    for behavior in gacha.behaviors:
-        if behavior.type == 'over_rarity_4_once':
-            ret.guaranteed_type = 'rarity_4'
-            ret.guaranteed_rarities = ['rarity_4']
-        elif behavior.type == 'over_rarity_3_once':
-            ret.guaranteed_type = 'rarity_3'
-            ret.guaranteed_rarities = ['rarity_3', 'rarity_4', 'rarity_birthday']
-    # 普通抽卡
-    for rate in gacha.rarity_rates:
-        if rate.lottery_type == 'normal':
-            ret.rates[rate.rarity] = rate.rate / 100.0
-    for rarity in GACHA_RATE_RARITIES:
-        for card in ret.cards.get(rarity, []):
-            card.rate = card.weight * ret.rates.get(rarity, 0) / ret.weights.get(rarity, 1)
-    # 保底抽卡
-    if ret.guaranteed_type:
-        for rate in gacha.rarity_rates:
-            if rate.lottery_type == 'normal':
-                ret.guaranteed_rates[rate.rarity] = rate.rate / 100.0
-        if ret.guaranteed_type in ('rarity_4', 'rarity_3'):
-            ret.guaranteed_rates[ret.guaranteed_type] += ret.rates.get('rarity_2', 0)
-            ret.guaranteed_rates['rarity_2'] = 0
-        if ret.guaranteed_type in ('rarity_4',):
-            ret.guaranteed_rates[ret.guaranteed_type] += ret.rates.get('rarity_3', 0)
-            ret.guaranteed_rates['rarity_3'] = 0
-        for rarity in GACHA_RATE_RARITIES:
-            for card in ret.cards.get(rarity, []):
-                card.guaranteed_rate = card.weight * ret.guaranteed_rates.get(rarity, 0) / ret.weights.get(rarity, 1)
+async def get_gacha_weight_info(
+    ctx: SekaiHandlerContext,
+    gacha: Gacha,
+    selected_pickup_ids: Optional[Sequence[int]] = None,
+) -> GachaWeightInfo:
+    card_ids = [card.id for card in gacha.cards]
+    md_cards = await ctx.md.cards.collect_by_ids(card_ids)
+    rarity_map = {card["id"]: card["cardRarityType"] for card in md_cards}
+    sim_gacha = SimGacha(
+        rarity_rates=[
+            SimGachaRateEntry(
+                rarity=rate.rarity,
+                rate=rate.rate,
+                lottery_type=rate.lottery_type,
+            )
+            for rate in gacha.rarity_rates
+        ],
+        behaviors=[
+            SimGachaBehavior(type=behavior.type, spin_count=behavior.spin_count)
+            for behavior in gacha.behaviors
+        ],
+        cards=[
+            SimGachaCard(
+                id=card.id,
+                rarity=rarity_map[card.id],
+                weight=card.weight,
+                is_wish=card.is_wish,
+                is_pickup=card.is_pickup,
+                wish_type=card.wish_type,
+            )
+            for card in gacha.cards
+        ],
+        wish_select_count=gacha.wish_select_count,
+        wish_fixed_select_count=gacha.wish_fixed_select_count,
+        wish_limited_select_count=gacha.wish_limited_select_count,
+    )
+    logic_info = build_gacha_weight_info(sim_gacha, selected_pickup_ids)
+
+    ret = GachaWeightInfo(
+        weights=dict(logic_info.weights),
+        rates=dict(logic_info.rates),
+        guaranteed_rates=dict(logic_info.guaranteed_rates),
+        guaranteed_type=logic_info.guaranteed_type,
+        guaranteed_rarities=list(logic_info.guaranteed_rarities),
+    )
+    for rarity, cards in logic_info.cards.items():
+        ret.cards[rarity] = [
+            GachaCardWeightInfo(
+                id=card.id,
+                rarity=card.rarity,
+                weight=card.weight,
+                is_pickup=card.is_pickup,
+                rate=card.rate,
+                guaranteed_rate=card.guaranteed_rate,
+            )
+            for card in cards
+        ]
     return ret
 
 # 解析查单个卡池指令参数
@@ -561,66 +929,60 @@ async def compose_gacha_detail_image(ctx: SekaiHandlerContext, gacha: Gacha):
     return await canvas.get_img()
 
 # 模拟抽卡
-async def spin_gacha(ctx: SekaiHandlerContext, gacha: Gacha, count: int) -> List[GachaSpinResult]:
-    assert_and_reply(count == 1 or count % 10 == 0, "抽卡次数必须为1或10的倍数")
-    info = await get_gacha_weight_info(ctx, gacha)
+async def spin_gacha(
+    ctx: SekaiHandlerContext,
+    gacha: Gacha,
+    count: int,
+    selected_pickup_ids: Optional[Sequence[int]] = None,
+) -> List[GachaSpinResult]:
+    try:
+        validate_spin_count(count)
+        info = await get_gacha_weight_info(ctx, gacha, selected_pickup_ids)
+    except ValueError as e:
+        assert_and_reply(False, str(e))
 
-    all_cards: List[GachaCardWeightInfo] = []
-    all_guaranteed_cards: List[GachaCardWeightInfo] = []
-    for rarity, cards in info.cards.items():
-        all_cards.extend(cards)
-        if rarity in info.guaranteed_rarities:
-            all_guaranteed_cards.extend(cards)
-    all_weights = [c.rate for c in all_cards]
-    all_guaranteed_weights = [c.guaranteed_rate for c in all_guaranteed_cards]
-
-    ret: List[GachaSpinResult] = []
-    guarantee = True
-    for i in range(1, count + 1):
-        cards, weights = all_cards, all_weights
-        if i % 1 == 0:
-            guarantee = True
-        if i % 10 == 0 and guarantee and info.guaranteed_type:
-            cards, weights = all_guaranteed_cards, all_guaranteed_weights
-        result = random.choices(cards, weights=weights, k=1)[0]
-        ret.append(GachaSpinResult(
+    results = spin_cards(
+        info,
+        count,
+        lambda cards, weights: random.choices(cards, weights=weights, k=1)[0],
+    )
+    return [
+        GachaSpinResult(
             id=result.id,
             rarity=result.rarity,
             is_pickup=result.is_pickup,
-        ))
-        if result.rarity in info.guaranteed_rarities:
-            guarantee = False
-    return ret
+            draw_index=result.draw_index,
+        )
+        for result in results
+    ]
 
 # 合成抽卡结果图片
 async def compose_gacha_spin_image(ctx: SekaiHandlerContext, gacha: Gacha, cards: List[GachaSpinResult]):
     count = len(cards)
-    grid_items: List[Union[int, str]] = []
-    if count <= 10:
-        grid_items = [c.id for c in cards]
-    else:
-        rarity_cards: Dict[str, List[GachaSpinResult]] = {}
-        for c in cards:
-            rarity = c.rarity if not c.is_pickup else 'pickup'
-            rarity_cards.setdefault(rarity, []).append(c)
-        RARITY_ORDER = ['pickup', 'rarity_birthday', 'rarity_4', 'rarity_3', 'rarity_2', 'rarity_1']
-        for rarity in RARITY_ORDER:
-            cards = rarity_cards.get(rarity, [])
-            if not cards:
-                continue
-            show_num = config.get(f'gacha.spin_result_show_num.{rarity}', 100)
-            for c in cards[:show_num]:
-                grid_items.append(c.id)
-            if len(cards) > show_num:
-                grid_items.append(f"...等\n共{len(cards)}张\n{GACHA_RARE_NAMES[rarity]}")
+    show_num_map = {
+        rarity: config.get(f'gacha.spin_result_show_num.{rarity}', 100)
+        for rarity in ['pickup'] + GACHA_RATE_RARITIES
+    }
+    grid_items = build_spin_grid_items(
+        [
+            SimSpinResult(
+                id=card.id,
+                rarity=card.rarity,
+                is_pickup=card.is_pickup,
+                draw_index=card.draw_index,
+            )
+            for card in cards
+        ],
+        show_num_map,
+    )
     
     logo_img = await get_gacha_logo(ctx, gacha)
     spin_text = "模拟单抽结果" if count == 1 else f"模拟{count}连结果"
 
     card_ids = set()
     for i in grid_items:
-        if isinstance(i, int):
-            card_ids.add(i)
+        if isinstance(i, SpinGridCardItem):
+            card_ids.add(i.id)
     card_ids = list(card_ids)
     thumbs = await batch_gather(*[get_card_full_thumbnail(ctx, card_id) for card_id in card_ids])
     card_thumbs: Dict[int, Image.Image] = { id: thumb for id, thumb in zip(card_ids, thumbs) }
@@ -628,22 +990,48 @@ async def compose_gacha_spin_image(ctx: SekaiHandlerContext, gacha: Gacha, cards
     # 绘图
     style1 = TextStyle(font=DEFAULT_BOLD_FONT, size=32, color=(75, 75, 75))
     style2 = TextStyle(font=DEFAULT_FONT, size=20, color=(75, 75, 75))
+    badge_style = TextStyle(font=DEFAULT_BOLD_FONT, size=18 if count <= 10 else 13, color=WHITE)
     thumb_size, sep = 100, 16
     if count <= 10: 
         thumb_size *= 2
         sep *= 2
     col_num = min(5 if count <= 10 else 10, len(grid_items))
+
+    def add_spin_card(item: SpinGridCardItem):
+        left_badge, right_badge = get_spin_grid_badge_texts(item)
+        if not item.label:
+            ImageBox(card_thumbs[item.id], size=(thumb_size, thumb_size), shadow=True)
+            return
+
+        frame_fill = (255, 236, 245, 255) if item.is_pickup else (255, 244, 214, 255)
+        frame_stroke = (255, 103, 181, 255) if item.is_pickup else (255, 191, 0, 255)
+        left_fill = (255, 72, 166, 255) if item.is_pickup else (255, 179, 0, 255)
+        badge_h = 28 if count <= 10 else 22
+        inner_thumb_size = thumb_size - (12 if count <= 10 else 8)
+        bottom_h = badge_h + (10 if count <= 10 else 8)
+
+        with VSplit().set_sep(4).set_padding(4).set_size((thumb_size, thumb_size + bottom_h)).set_content_align('c').set_item_align('c') \
+                .set_bg(RoundRectBg(fill=frame_fill, radius=10, stroke=frame_stroke, stroke_width=3)):
+            ImageBox(card_thumbs[item.id], size=(inner_thumb_size, inner_thumb_size), shadow=True)
+            with Frame().set_size((inner_thumb_size, badge_h)).set_content_align('lt'):
+                TextBox(left_badge, badge_style, overflow='clip') \
+                    .set_padding((10, 3)).set_bg(RoundRectBg(fill=left_fill, radius=badge_h // 2)) \
+                    .set_offset((0, badge_h)).set_offset_anchor('lb')
+                TextBox(right_badge, badge_style, overflow='clip') \
+                    .set_padding((10, 3)).set_bg(RoundRectBg(fill=(55, 178, 74, 255), radius=badge_h // 2)) \
+                    .set_offset((inner_thumb_size, badge_h)).set_offset_anchor('rb')
+
     with Canvas(bg=SEKAI_BLUE_BG).set_padding(BG_PADDING) as canvas:
         with VSplit().set_padding(32).set_sep(24).set_content_align('lt').set_item_align('lt').set_bg(roundrect_bg()):
             with HSplit().set_padding(0).set_sep(32).set_content_align('l').set_item_align('l').set_omit_parent_bg(True):
                 ImageBox(logo_img, size=(None, 100))
                 TextBox(f"【{ctx.region.upper()}-{gacha.id}】{gacha.name}\n{spin_text}", style1, use_real_line_count=True)
-            with Grid(col_count=col_num).set_padding(0).set_sep(sep, sep).set_content_align('c').set_item_align('c'):
+            with Grid(col_count=col_num).set_padding(0).set_sep(sep, sep).set_content_align('c').set_item_align('t'):
                 for item in grid_items:
-                    if isinstance(item, int):
-                        ImageBox(card_thumbs[item], size=(thumb_size, thumb_size), shadow=True)
+                    if isinstance(item, SpinGridCardItem):
+                        add_spin_card(item)
                     else:
-                        TextBox(item, style2, use_real_line_count=True) \
+                        TextBox(item.text, style2, use_real_line_count=True) \
                             .set_size((thumb_size, thumb_size)).set_content_align('c').set_bg(roundrect_bg())
 
     add_watermark(canvas)
