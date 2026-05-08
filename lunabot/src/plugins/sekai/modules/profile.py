@@ -876,25 +876,37 @@ async def compose_profile_image(ctx: SekaiHandlerContext, basic_profile: dict, v
                             t = TextBox(str(rank), TextStyle(font=DEFAULT_FONT, size=20, color=(40, 40, 40, 255)))
                             t.set_size((60, 48)).set_content_align('c').set_offset((36, 4))
                 
-                # 挑战Live等级
-                if 'userChallengeLiveSoloResult' in basic_profile:
-                    solo_live_result = basic_profile['userChallengeLiveSoloResult']
-                    if isinstance(solo_live_result, list):
-                        solo_live_result = sorted(solo_live_result, key=lambda x: x['highScore'], reverse=True)[0]
-                    cid, score = solo_live_result['characterId'], solo_live_result['highScore']
-                    stages = find_by(basic_profile['userChallengeLiveSoloStages'], 'characterId', cid, mode='all')
-                    stage_rank = max([stage['rank'] for stage in stages])
-                    
+                # 挑战Live等级 / 协力MVP统计
+                if 'userChallengeLiveSoloResult' in basic_profile or 'userMultiLiveTopScoreCount' in basic_profile:
                     with VSplit().set_content_align('c').set_item_align('c').set_padding((32, 64)).set_sep(12):
-                        t = TextBox(f"CHANLLENGE LIVE", TextStyle(font=DEFAULT_FONT, size=18, color=(50, 50, 50, 255)))
-                        t.set_bg(roundrect_bg(radius=6)).set_padding((10, 7))
-                        with Frame():
-                            chara_img = ctx.static_imgs.get(f'chara_rank_icon/{get_character_first_nickname(cid)}.png')
-                            ImageBox(chara_img, size=(100, 50), use_alphablend=True)
-                            t = TextBox(str(stage_rank), TextStyle(font=DEFAULT_FONT, size=22, color=(40, 40, 40, 255)), overflow='clip')
-                            t.set_size((50, 50)).set_content_align('c').set_offset((40, 5))
-                        t = TextBox(f"SCORE {score}", TextStyle(font=DEFAULT_FONT, size=18, color=(50, 50, 50, 255)))
-                        t.set_bg(roundrect_bg(radius=6)).set_padding((10, 7))
+                        common_style = TextStyle(font=DEFAULT_FONT, size=18, color=(50, 50, 50, 255))
+                        box_bg = roundrect_bg(radius=6)
+                        box_padding = (10, 7)
+
+                        if 'userChallengeLiveSoloResult' in basic_profile:
+                            solo_live_result = basic_profile['userChallengeLiveSoloResult']
+                            if isinstance(solo_live_result, list):
+                                solo_live_result = sorted(solo_live_result, key=lambda x: x['highScore'], reverse=True)[0]
+                            cid, score = solo_live_result['characterId'], solo_live_result['highScore']
+                            stages = find_by(basic_profile['userChallengeLiveSoloStages'], 'characterId', cid, mode='all')
+                            stage_rank = max([stage['rank'] for stage in stages]) if stages else 0
+
+                            TextBox("CHANLLENGE LIVE", common_style).set_bg(box_bg).set_padding(box_padding)
+                            with Frame():
+                                chara_img = ctx.static_imgs.get(f'chara_rank_icon/{get_character_first_nickname(cid)}.png')
+                                ImageBox(chara_img, size=(100, 50), use_alphablend=True)
+                                t = TextBox(str(stage_rank), TextStyle(font=DEFAULT_FONT, size=22, color=(40, 40, 40, 255)), overflow='clip')
+                                t.set_size((50, 50)).set_content_align('c').set_offset((40, 5))
+                            TextBox(f"SCORE {score}", common_style).set_bg(box_bg).set_padding(box_padding)
+
+                        if 'userMultiLiveTopScoreCount' in basic_profile:
+                            multi_stats = basic_profile['userMultiLiveTopScoreCount']
+                            mvp_count = multi_stats.get('mvp', 0)
+                            ss_count = multi_stats.get('superStar', 0)
+
+                            TextBox("MULTI LIVE", common_style).set_bg(box_bg).set_padding(box_padding)
+                            TextBox(f"MVP  {mvp_count}次", common_style).set_bg(box_bg).set_padding(box_padding)
+                            TextBox(f"SUPERSTAR  {ss_count}次", common_style).set_bg(box_bg).set_padding(box_padding)
 
             # 卡组（竖版）
             if vertical:

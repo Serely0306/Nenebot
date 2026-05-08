@@ -11,6 +11,7 @@ from .misc import *
 from .music import *
 from .mysekai import *
 from .profile import *
+from .cr_test import *
 from .resbox import *
 from .score import *
 from .sk import *
