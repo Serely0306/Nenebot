@@ -1,0 +1,197 @@
+proxy: ""
+jp_sekai_cookie_url: "https://issue.sekai.colorfulpalette.org/api/signature"
+
+git:
+  enabled: false
+  username: ""
+  email: "@users.noreply.github.com"
+  password: ""
+
+redis:
+  enabled: false
+  host: "127.0.0.1"
+  port: 6379
+  password: ""          # keep it empty if no password
+
+backend:
+  host: "127.0.0.1"
+  port: 9999
+  ssl: false
+  ssl_cert: ""
+  ssl_key: ""
+  log_level: "INFO"
+  main_log_file: "./main.log"     # output to console if empty
+  access_log: "${time} ${ip} ${status} ${method} ${path}\n"
+  access_log_path: "./access.log" # output to console if empty
+  sekai_user_jwt_signing_key: ""
+  enable_trust_proxy: false
+  trusted_proxies:
+    - "127.0.0.0/8"
+    - "::1/128"
+    - "192.168.0.0/16"
+    - "172.16.0.0/12"
+    - "100.64.0.0/10"
+    - "10.0.0.0/8"
+  proxy_header: "X-Forwarded-For"
+
+gorm:
+  enabled: false                   # set it to false if not using database
+  dialect: "mysql"                # database type: mysql | postgres | sqlite | sqlserver
+  dsn: "user:pass@tcp(ip:host)/database?charset=utf8mb4&parseTime=True&loc=UTC"  # gorm data source name
+  max_open_conns: 25
+  max_idle_conns: 10
+  conn_max_lifetime: "1h"
+  prepare_stmt: true
+  disable_fk_migrate: false
+  logger:
+    level: "warn"                 # logging level: silent | error | warn | info
+    slow_threshold: "200ms"
+    ignore_record_not_found_error: true
+    colorful: false
+  naming:
+    table_prefix: ""
+    singular_table: false
+
+apphash_sources: # sources for apphash, to update apphash values periodically
+  - type: file
+    dir: "./versions"
+  # - type: "url"
+  #   url: "https://raw.githubusercontent.com/Team-Haruki/haruki-sekai-master/refs/heads/main/versions/current_version.json"
+
+asset_updater_servers: # Haruki Sekai Asset Updater server instances
+  - url: "http://127.0.0.1:12345/update_asset"
+    authorization: ""
+
+servers:
+  jp:
+    enabled: true
+    api_url: "https://production-game-api.sekai.colorfulpalette.org"
+    require_cookies: true
+    headers:
+      Host: production-game-api.sekai.colorfulpalette.org
+      User-Agent: UnityPlayer/2022.3.21f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)
+      Accept-Encoding: deflate, gzip
+      Content-Type: application/octet-stream
+      Accept: application/octet-stream
+      X-Install-Id: b30e0af9-96bd-40a3-bf88-2a77b78596d1
+      X-App-Version: 6.2.1
+      X-App-Hash: 41ef55a8-dc0b-11e2-741a-8f6d4edf5614
+      X-Data-Version: 6.2.0.60
+      X-Asset-Version: 6.2.0.60
+      X-Request-Id: 1e34c266-a687-4af4-8bcb-f0d31c6bb60a
+      X-Platform: Android
+      X-DeviceModel: Xiaomi 23046RP50C
+      X-OperatingSystem: Android OS 13 / API-33 (TKQ1.221114.001/V14.0.9.0.TMYCNXM)
+      X-AI: c62ac506afdf10c38c12837c69139fb6
+      X-GA: cbbf9e15-bb6c-4ab5-aa6b-06ce0b63f50c
+      X-Unity-Version: 2022.3.21f1
+      Content-Length: 288
+      # fill in other headers as needed
+    aes_key_hex: "6732666343305a637a4e394d544a3631"
+    aes_iv_hex:  "6d737833495630693958453575595a31"
+    account_dir: "./jp/accounts"
+    master_dir: "./jp/master"
+    version_path: "./jp/version.json"
+    nuverse_master_data_url: ""
+    nuverse_structure_file_path: ""
+    enable_master_updater: true # check for master data updates periodically
+    master_updater_cron: "7 * * * * *" # cron expression, this mean "execute it at every minute at second 7"
+    enable_app_hash_updater: true # check for app hash updates periodically
+    app_hash_updater_cron: "30 * * * * *" # cron expression, this mean "execute it at every minute at second 30"
+
+  en:
+    enabled: false
+    api_url: ""
+    require_cookies: false
+    headers:
+      Host: ""
+      # fill in other headers as needed
+    aes_key_hex: ""
+    aes_iv_hex: ""
+    account_dir: ""
+    master_dir: ""
+    version_path: ""
+    nuverse_master_data_url: ""
+    nuverse_structure_file_path: ""
+    enable_master_updater: true # check for master data updates periodically
+    master_updater_cron: "7 * * * * *" # cron expression, this mean "execute it at every minute at second 7"
+    enable_app_hash_updater: true # check for app hash updates periodically
+    app_hash_updater_cron: "30 * * * * *" # cron expression, this mean "execute it at every minute at second 30"
+
+  tw:
+    enabled: false
+    api_url: ""
+    require_cookies: false
+    headers:
+      Host: ""
+      # fill in other headers as needed
+    aes_key_hex: ""
+    aes_iv_hex: ""
+    account_dir: ""
+    master_dir: ""
+    version_path: ""
+    nuverse_master_data_url: ""
+    nuverse_structure_file_path: ""
+    enable_master_updater: true # check for master data updates periodically
+    master_updater_cron: "7 * * * * *" # cron expression, this mean "execute it at every minute at second 7"
+    enable_app_hash_updater: true # check for app hash updates periodically
+    app_hash_updater_cron: "30 * * * * *" # cron expression, this mean "execute it at every minute at second 30"
+
+  kr:
+    enabled: false
+    api_url: ""
+    require_cookies: false
+    headers:
+      Host: ""
+      # fill in other headers as needed
+    aes_key_hex: ""
+    aes_iv_hex: ""
+    account_dir: ""
+    master_dir: ""
+    version_path: ""
+    nuverse_master_data_url: ""
+    nuverse_structure_file_path: ""
+    enable_master_updater: true # check for master data updates periodically
+    master_updater_cron: "7 * * * * *" # cron expression, this mean "execute it at every minute at second 7"
+    enable_app_hash_updater: true # check for app hash updates periodically
+    app_hash_updater_cron: "30 * * * * *" # cron expression, this mean "execute it at every minute at second 30"
+
+  cn:
+    enabled: true
+    api_url: "https://mkcn-prod-public-60001-1.dailygn.com"
+    require_cookies: false
+
+    headers:
+      Host: "mkcn-prod-public-60001-1.dailygn.com"
+      User-Agent: "UnityPlayer/2022.3.21f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)"
+      Accept: "application/octet-stream"
+      Accept-Encoding: "deflate, gzip"
+      Content-Type: "application/octet-stream"
+      X-Install-Id: "7c160479-8768-40eb-9d46-e63f8df16dc2"
+      X-App-Version: "5.2.0.3100"
+      X-App-Hash: "4ca841be-5890-6c8e-930d-eb172f8993c3"
+      X-CHANNEL-OP: "taptap"
+      X-Data-Version: "5.2.0.33"
+      X-Asset-Version: "5.2.0"
+      X-Platform: "Android"
+      device_id: "3112091376489443"
+      X-DeviceModel: "Xiaomi 23046RP50C"
+      X-OperatingSystem: "Android OS 13 / API-33 (TKQ1.221114.001/V14.0.9.0.TMYCNXM)"
+      X-Unity-Version: "2022.3.21f1"
+      # X-Session-Token: "..."    # 不建议写死，登录后会自动更新
+      # X-Request-Id: "..."       # 每次请求会自动生成
+
+    aes_key_hex: "6732666343305a637a4e394d544a3631"
+    aes_iv_hex:  "6d737833495630693958453575595a31"
+
+    account_dir: "./cn/accounts"
+    master_dir: "./cn/master"
+    version_path: "./cn/version.json"
+
+    nuverse_master_data_url: ""
+    nuverse_structure_file_path: ""
+
+    enable_master_updater: false
+    master_updater_cron: "7 * * * * *"
+    enable_app_hash_updater: false
+    app_hash_updater_cron: "30 * * * * *"

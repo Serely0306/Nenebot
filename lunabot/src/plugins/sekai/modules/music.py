@@ -993,11 +993,17 @@ def get_owned_music_vocal_ids(profile: dict) -> set[int]:
     vocals = list(profile.get('userMusicVocals', []) or [])
     if not vocals:
         for item in profile.get('userMusics', []):
-            vocals.extend(item.get('userMusicVocals', []))
+            if isinstance(item, dict):
+                vocals.extend(item.get('userMusicVocals', []))
 
     ret: set[int] = set()
     for item in vocals:
-        vid = item.get('musicVocalId', None)
+        if isinstance(item, dict):
+            vid = item.get('musicVocalId', None)
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            vid = item[1]
+        else:
+            vid = None
         if vid is not None:
             ret.add(int(vid))
     return ret
