@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // 上传模式: 'direct' = 直接上传(suite), 'query' = 查询绑定后上传(mysekai)
     const uploadMode = window.UPLOAD_MODE || 'query';
     const dataType = window.UPLOAD_DATA_TYPE || 'suite';
+    const apiBase = new URL('../api/', window.location.href);
 
     // 通用元素引用
     const regionSelect = document.getElementById('region');
@@ -53,7 +54,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 hideMessage();
 
                 try {
-                    const response = await fetch('api/query_binding', {
+                    const response = await fetch(new URL('query_binding', apiBase), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ qq_id: qqId, region: region })
@@ -280,7 +281,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 uploadBtn.disabled = false;
             });
 
-            xhr.open('POST', `upload/${dataType}`);
+            xhr.open('POST', new URL(`upload/${dataType}`, apiBase));
             xhr.send(formData);
 
         } catch (error) {

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from flask import jsonify, request, send_from_directory
+from flask import jsonify, redirect, request, send_from_directory
 
 from core.help_texts import (
     build_all_help_ios,
     build_ios_upload_script,
     build_mysekai_help_android,
-    build_mysekai_help_ios,
     build_suite_help_ios,
 )
 from core.runtime import CATCHER_DIR, DOWNLOAD_FILES, VALID_DATA_TYPES, VALID_REGIONS
@@ -21,18 +20,8 @@ def register_help_routes(app):
         host = get_request_host()
         return build_all_help_ios(host), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
-    @app.route("/suite/help/ios", methods=["GET"])
-    def suite_help_ios():
-        host = get_request_host()
-        return build_suite_help_ios(host), 200, {"Content-Type": "text/plain; charset=utf-8"}
-
-    @app.route("/mysekai/help/ios", methods=["GET"])
-    def mysekai_help_ios():
-        host = get_request_host()
-        return build_mysekai_help_ios(host), 200, {"Content-Type": "text/plain; charset=utf-8"}
-
-    @app.route("/mysekai/help/android", methods=["GET"])
-    def mysekai_help_android():
+    @app.route("/help/android", methods=["GET"])
+    def help_android():
         host = get_request_host()
         return build_mysekai_help_android(host), 200, {"Content-Type": "text/plain; charset=utf-8"}
 

@@ -210,7 +210,7 @@ def register_proxy_routes(app):
             print(f"代理请求失败: {exc}")
             return jsonify({"error": "Proxy error"}), 502
 
-    @app.route("/upload/<data_type>", methods=["POST"])
+    @app.route("/api/upload/<data_type>", methods=["POST"])
     def upload(data_type):
         data_type = data_type.lower()
         if data_type not in VALID_DATA_TYPES:

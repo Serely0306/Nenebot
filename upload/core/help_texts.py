@@ -6,7 +6,7 @@ def _build_upload_script_url(host: str, region: str, data_type: str) -> str:
 
 
 def _build_ios_upload_api_url(host: str, region: str, data_type: str) -> str:
-    return f"https://{host}/upload/api/ios/upload?region={region}&data_type={data_type}"
+    return f"https://{host}/api/ios/upload?region={region}&data_type={data_type}"
 
 
 def build_suite_help_ios(host: str) -> str:
@@ -34,22 +34,17 @@ hostname=%APPEND% mkcn-prod-public-60001-1.dailygn.com, mkcn-prod-public-60001-2
 
 def build_all_help_ios(host: str) -> str:
     return f"""#!name=Sekai Upload Helper
-#!desc=自动抓取 Suite + MySekai 数据并上传到 LunaBot 服务器 ({host})
+#!desc=自动抓取 Suite + 日服 MySekai 数据并上传到 LunaBot 服务器 ({host})
 #!author=Nene-LunaBot
 #!system=ios
 #!redirect=3
 #!mitm=3
-#!total=8
+#!total=6
 # 按需修改配置注释
 
 [URL Rewrite]
-# 日服 (取消注释以启用)
-# ^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=False$ https://production-game-api.sekai.colorfulpalette.org/api/user/$1/mysekai?isForceAllReloadOnlyMysekai=True 307
-# ^https:\\/\\/submit\\.backtrace\\.io\\/ reject
-
-# 国服
-^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=False$ https://mkcn-prod-public-60001-1.dailygn.com/api/user/$1/mysekai?isForceAllReloadOnlyMysekai=True 307
-^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=False$ https://mkcn-prod-public-60001-2.dailygn.com/api/user/$1/mysekai?isForceAllReloadOnlyMysekai=True 307
+# 日服 MySekai
+^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=False$ https://production-game-api.sekai.colorfulpalette.org/api/user/$1/mysekai?isForceAllReloadOnlyMysekai=True 307
 ^https:\\/\\/submit\\.backtrace\\.io\\/ reject
 
 [Script]
@@ -57,17 +52,12 @@ def build_all_help_ios(host: str) -> str:
 SCRIPT_cn_suite_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "cn", "suite")}
 SCRIPT_cn_suite_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "cn", "suite")}
 
-# 国服 MySekai
-SCRIPT_cn_mysekai_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "cn", "mysekai")}
-SCRIPT_cn_mysekai_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "cn", "mysekai")}
-
-# 日服 (取消注释以启用)
+# 日服 (按需取消注释 Suite；MySekai 已保留)
 # SCRIPT_jp_suite = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "jp", "suite")}
-# SCRIPT_jp_mysekai = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "jp", "mysekai")}
+SCRIPT_jp_mysekai = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "jp", "mysekai")}
 
 [MITM]
-# hostname=%APPEND% production-game-api.sekai.colorfulpalette.org, submit.backtrace.io
-hostname=%APPEND% mkcn-prod-public-60001-1.dailygn.com, mkcn-prod-public-60001-2.dailygn.com, submit.backtrace.io
+hostname=%APPEND% mkcn-prod-public-60001-1.dailygn.com, mkcn-prod-public-60001-2.dailygn.com, production-game-api.sekai.colorfulpalette.org, submit.backtrace.io
 """
 
 
@@ -120,15 +110,12 @@ wget https://{host}/upload/download/uninstall-catcher.sh
 1. 在 MT 管理器中，打开终端后 cd 到你的主目录（一般你打开终端后下方会有一个命令，点击确定）
 2. 在终端中运行 wget https://{host}/upload/download/catcher.sh，找到该文件点按，设置选择以扩展包环境执行，以root权限执行，点击执行
 3. 下载完后如自动重启失败则手动重启虚拟机
-使用后需要关闭进程必须使用停止脚本，初次下载之后都直接执行，下载命令见上，如如果后续报错如网络错误或地址已经存在，请先确认是否按要求关闭进程
+使用后需要关闭进程必须使用停止脚本，初次下载之后都直接执行，下载命令见上，如果后续报错如网络错误或地址已经存在，请先确认是否按要求关闭进程
 抓包时直接执行 catcher.sh 即可，然后运行游戏，所提取数据仅供Nenebot使用
 
-## 与harukiproxy不同之处
-1. 如果没有harukiproxy证书，注释掉config中指向harukiproxy证书的两行，安装catcher证书后需要重启虚拟机，可在完成后一起重启
-2. 如果设置代理失败则需要手动设置代理，在设置中的wifi处长按当前wifi，设置为手动代理，主机名设置为127.0.0.1,端口设置为888，修改完后重启虚拟机
 ## 注意事项
-1. CA证书优先使用haruki-proxy所安装的证书
-2. 关闭进程请使用下面的脚本，仅关闭终端无法关闭进程
+1. 关闭进程请使用下面的脚本，仅关闭终端无法关闭进程
+2. 如果设置代理失败则需要手动设置代理，在设置中的wifi处长按当前wifi，设置为手动代理，主机名设置为127.0.0.1,端口设置为8888，修改完后重启虚拟机
 """
 
 
