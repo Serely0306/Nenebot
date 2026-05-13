@@ -20,6 +20,10 @@ faulthandler.enable()
 
 def write_file(file_path: str, data: bytes) -> None:
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    if os.path.exists(file_path) and os.path.getsize(file_path) == len(data):
+        with open(file_path, 'rb') as file:
+            if file.read() == data:
+                return
     tmp_path = file_path + '.tmp'
     with open(tmp_path, 'wb') as file:
         file.write(data)
