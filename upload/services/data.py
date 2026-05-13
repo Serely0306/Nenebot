@@ -9,6 +9,10 @@ from services.crypto import DECRYPT_AVAILABLE, convert_to_serializable, decrypt_
 from services.suite import merge_suite_incremental_fields, process_suite_compact
 
 
+class UploadProcessingError(RuntimeError):
+    pass
+
+
 def load_and_filter_json(file_path: Path, filter_keys: list[str]):
     with file_path.open("r", encoding="utf-8") as fh:
         data = json.load(fh)
@@ -60,18 +64,16 @@ def normalize_upload_payload(region: str, data: dict, data_type: str, game_id: s
 
 
 def process_and_save_data(region, uid, data_bytes, data_type="mysekai"):
+    if not DECRYPT_AVAILABLE:
+        raise UploadProcessingError("服务器未安装解密依赖，无法保存代理抓取的数据")
+
     try:
-        if not DECRYPT_AVAILABLE:
-            print("警告: 解密依赖未安装，无法保存代理抓取的数据")
-            return
+        decrypted_data = decrypt_binary_data(data_bytes, region)
+        data = convert_to_serializable(decrypted_data)
+    except Exception as exc:
+        raise UploadProcessingError(f"代理数据解密失败: {exc}") from exc
 
-        try:
-            decrypted_data = decrypt_binary_data(data_bytes, region)
-            data = convert_to_serializable(decrypted_data)
-        except Exception as exc:
-            print(f"代理数据解密失败: {exc}")
-            return
-
+    try:
         data = normalize_upload_payload(
             region=region,
             data=data,
@@ -81,6 +83,8 @@ def process_and_save_data(region, uid, data_bytes, data_type="mysekai"):
             local_source="proxy_upload",
         )
         save_path = save_json_payload(region, data_type, str(uid), data)
-        print(f"代理抓包成功: {region} user {uid} ({data_type}) -> {save_path}")
     except Exception as exc:
-        print(f"处理代理数据时出错: {exc}")
+        raise UploadProcessingError(f"处理代理数据时出错: {exc}") from exc
+
+    print(f"代理抓包成功: {region} user {uid} ({data_type}) -> {save_path}")
+    return save_path

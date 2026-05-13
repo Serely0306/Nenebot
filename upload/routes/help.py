@@ -3,6 +3,7 @@ from __future__ import annotations
 from flask import jsonify, request, send_from_directory
 
 from core.help_texts import (
+    build_all_help_ios,
     build_ios_upload_script,
     build_mysekai_help_android,
     build_mysekai_help_ios,
@@ -14,6 +15,11 @@ from core.runtime import CATCHER_DIR, DOWNLOAD_FILES, VALID_DATA_TYPES, VALID_RE
 def register_help_routes(app):
     def get_request_host() -> str:
         return request.headers.get("X-Forwarded-Host") or request.headers.get("Host", "")
+
+    @app.route("/help/ios", methods=["GET"])
+    def all_help_ios():
+        host = get_request_host()
+        return build_all_help_ios(host), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
     @app.route("/suite/help/ios", methods=["GET"])
     def suite_help_ios():

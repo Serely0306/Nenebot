@@ -72,5 +72,6 @@ catcher/Catcher-android-arm64-test
 catcher/config-android.yaml
 upload/debug
 upload/tools
+upload/tests
 upload/config.yaml
 harukineo/

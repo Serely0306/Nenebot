@@ -21,14 +21,53 @@ def build_suite_help_ios(host: str) -> str:
 
 [Script]
 # 国服
-SCRIPT_cn_suite_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/suite\\/user\\/(\\d+)$, script-path={_build_upload_script_url(host, "cn", "suite")}
-SCRIPT_cn_suite_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/suite\\/user\\/(\\d+)$, script-path={_build_upload_script_url(host, "cn", "suite")}
+SCRIPT_cn_suite_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "cn", "suite")}
+SCRIPT_cn_suite_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "cn", "suite")}
 
 # 日服 (取消注释以启用)
-# SCRIPT_jp_suite = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/suite\\/user\\/(\\d+)$, script-path={_build_upload_script_url(host, "jp", "suite")}
+# SCRIPT_jp_suite = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "jp", "suite")}
 
 [MITM]
 hostname=%APPEND% mkcn-prod-public-60001-1.dailygn.com, mkcn-prod-public-60001-2.dailygn.com
+"""
+
+
+def build_all_help_ios(host: str) -> str:
+    return f"""#!name=Sekai Upload Helper
+#!desc=自动抓取 Suite + MySekai 数据并上传到 LunaBot 服务器 ({host})
+#!author=Nene-LunaBot
+#!system=ios
+#!redirect=3
+#!mitm=3
+#!total=8
+# 按需修改配置注释
+
+[URL Rewrite]
+# 日服 (取消注释以启用)
+# ^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=False$ https://production-game-api.sekai.colorfulpalette.org/api/user/$1/mysekai?isForceAllReloadOnlyMysekai=True 307
+# ^https:\\/\\/submit\\.backtrace\\.io\\/ reject
+
+# 国服
+^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=False$ https://mkcn-prod-public-60001-1.dailygn.com/api/user/$1/mysekai?isForceAllReloadOnlyMysekai=True 307
+^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=False$ https://mkcn-prod-public-60001-2.dailygn.com/api/user/$1/mysekai?isForceAllReloadOnlyMysekai=True 307
+^https:\\/\\/submit\\.backtrace\\.io\\/ reject
+
+[Script]
+# 国服 Suite
+SCRIPT_cn_suite_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "cn", "suite")}
+SCRIPT_cn_suite_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "cn", "suite")}
+
+# 国服 MySekai
+SCRIPT_cn_mysekai_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "cn", "mysekai")}
+SCRIPT_cn_mysekai_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "cn", "mysekai")}
+
+# 日服 (取消注释以启用)
+# SCRIPT_jp_suite = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "jp", "suite")}
+# SCRIPT_jp_mysekai = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "jp", "mysekai")}
+
+[MITM]
+# hostname=%APPEND% production-game-api.sekai.colorfulpalette.org, submit.backtrace.io
+hostname=%APPEND% mkcn-prod-public-60001-1.dailygn.com, mkcn-prod-public-60001-2.dailygn.com, submit.backtrace.io
 """
 
 
@@ -54,11 +93,11 @@ def build_mysekai_help_ios(host: str) -> str:
 
 [Script]
 # 国服
-SCRIPT_cn_mysekai_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True$, script-path={_build_upload_script_url(host, "cn", "mysekai")}
-SCRIPT_cn_mysekai_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True$, script-path={_build_upload_script_url(host, "cn", "mysekai")}
+SCRIPT_cn_mysekai_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "cn", "mysekai")}
+SCRIPT_cn_mysekai_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "cn", "mysekai")}
 
 # 日服 (取消注释以启用)
-# SCRIPT_jp_mysekai = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True$, script-path={_build_upload_script_url(host, "jp", "mysekai")}
+# SCRIPT_jp_mysekai = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "jp", "mysekai")}
 
 [MITM]
 # hostname=%APPEND% production-game-api.sekai.colorfulpalette.org, submit.backtrace.io
@@ -122,16 +161,16 @@ function postChunk(options, callback) {{
             headers: options.headers,
             body: options.body,
         }}).then(
-            (response) => callback(null, response),
-            (error) => callback(error, null),
+            (response) => callback(null, response, response.body || ""),
+            (error) => callback(error, null, ""),
         );
         return;
     }}
     if (isSurgeLike) {{
-        $httpClient.post(options, (error, response) => callback(error, response));
+        $httpClient.post(options, (error, response, data) => callback(error, response, data || ""));
         return;
     }}
-    callback(new Error("Unsupported runtime"), null);
+    callback(new Error("Unsupported runtime"), null, "");
 }}
 
 const body = typeof $response !== "undefined" ? $response.body : "";
@@ -170,10 +209,13 @@ if (!body || !originalUrl) {{
                 }},
                 body: chunk,
             }},
-            (error, response) => {{
+            (error, response, responseBody) => {{
                 const status = response ? (response.statusCode || response.status) : 0;
                 if (error || status < 200 || status >= 300) {{
                     log(`chunk ${{chunkNumber}} failed: ${{error || status}}`);
+                    if (responseBody) {{
+                        log(`response body: ${{String(responseBody)}}`);
+                    }}
                     done({{}});
                     return;
                 }}

@@ -12,7 +12,12 @@ from flask import current_app, jsonify, request
 
 from core.runtime import BASE_DIR, REGION_API_HOSTS, REGION_NAMES, VALID_DATA_TYPES, VALID_REGIONS
 from services.crypto import DECRYPT_AVAILABLE, convert_to_serializable, decrypt_binary_data
-from services.data import normalize_upload_payload, process_and_save_data, save_json_payload
+from services.data import (
+    UploadProcessingError,
+    normalize_upload_payload,
+    process_and_save_data,
+    save_json_payload,
+)
 from services.profile import load_profile_db, mask_game_id
 from services.suite import extract_suite_user_id
 
@@ -116,7 +121,10 @@ def register_proxy_routes(app):
             data_bytes = _assemble_ios_chunks(session_dir, total_chunks)
             _cleanup_ios_session(session_dir)
 
-        process_and_save_data(region, uid, data_bytes, data_type)
+        try:
+            process_and_save_data(region, uid, data_bytes, data_type)
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
         return jsonify(
             {
                 "success": True,
@@ -186,7 +194,11 @@ def register_proxy_routes(app):
                 allow_redirects=False,
             )
             if resp.status_code == 200 and resp.content:
-                process_and_save_data(region, uid, resp.content, data_type)
+                try:
+                    process_and_save_data(region, uid, resp.content, data_type)
+                except UploadProcessingError as exc:
+                    print(f"代理数据保存失败: {exc}")
+                    return jsonify({"error": str(exc)}), 500
 
             response = current_app.make_response(resp.content)
             response.status_code = resp.status_code
