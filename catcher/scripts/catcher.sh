@@ -1,7 +1,8 @@
 #!/bin/sh
 # ============================================================
-# LunaBot Catcher 自动部署脚本
+# Catcher 自动部署脚本
 # 用于在 Android 设备/模拟器上自动下载并运行抓包工具
+# 
 # ============================================================
 
 # 获取 Root 权限
@@ -21,31 +22,23 @@ fi
 # ============================================================
 
 # 工作目录
-ROOT_DIR="/data/local/tmp/lunabot-catcher"
+ROOT_DIR="/data/local/tmp/catcher"
 
 # 可执行文件名和下载地址
-# TODO: 替换为你的实际下载地址
 BIN_NAME="Catcher-android-arm64"
-BIN_URL="https://你的服务器地址/download/$BIN_NAME"
+BIN_URL="http://159.75.213.84/upload/download/$BIN_NAME"
 
 # 配置文件名和下载地址
 CONFIG_NAME="config-android.yaml"
-CONFIG_URL="https://你的服务器地址/download/$CONFIG_NAME"
+CONFIG_URL="http://159.75.213.84/upload/download/$CONFIG_NAME"
 
-# 默认留空自动生成新证书
-EXTERNAL_CERT_PATH=""
-EXTERNAL_KEY_PATH=""
-
-# 外部证书路径 (如果使用过HarukiProxy服务则去掉注释使用 HarukiProxy 的证书)
-# EXTERNAL_CERT_PATH="/data/local/tmp/harukiproxy/ca.pem"
-# EXTERNAL_KEY_PATH="/data/local/tmp/harukiproxy/ca.key"
 
 # ============================================================
 # 脚本逻辑
 # ============================================================
 
 echo "=================================================="
-echo "  LunaBot Catcher 自动部署脚本"
+echo "  Catcher 自动部署脚本"
 echo "=================================================="
 
 # 确保工作目录存在
@@ -101,7 +94,7 @@ fi
 
 echo ""
 echo "=================================================="
-echo "  准备完成，正在启动 LunaBot Catcher..."
+echo "  准备完成，正在启动 Catcher..."
 echo "=================================================="
 echo ""
 
