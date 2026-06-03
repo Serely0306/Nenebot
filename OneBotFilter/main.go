@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	applymod "onebotfilter/src/apply"
 	"onebotfilter/src/core"
 	filtermod "onebotfilter/src/filter"
 	helpmod "onebotfilter/src/help"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -582,6 +584,23 @@ func main() {
 	statsModule.Start()
 	defer statsModule.Stop()
 
+	// ── apply 模块 ──
+	applyCfg := applymod.DefaultConfig()
+	applyCfgPath := filepath.Join(root, "config", "apply", "config.yaml")
+	if applyData, err := os.ReadFile(applyCfgPath); err == nil {
+		if err := yaml.Unmarshal(applyData, &applyCfg); err != nil {
+			log.Printf("解析 apply 配置失败: %v，使用默认配置\n", err)
+		}
+	}
+	if applyCfg.Enabled {
+		log.Println("加群审核自动受理已启用")
+		os.MkdirAll(filepath.Join(root, "config", "apply"), 0o755)
+	}
+	applyModule := applymod.New(applyCfg, wss, paths.FontFile)
+	if applyCfg.Enabled {
+		http.HandleFunc("/apply/notify", applyModule.HandleNotify)
+	}
+
 	filterModule := filtermod.NewModule(nil)
 	if err := filterModule.Reload(); err != nil {
 		log.Fatal("初始化过滤器失败:", err)
@@ -607,8 +626,13 @@ func main() {
 			Match:   filterModule.CanHandle,
 			Execute: filterModule.Handle,
 		},
+		core.ExternalCommandRoute{
+			Name:    "apply",
+			Match:   applyModule.CanHandle,
+			Execute: applyModule.Handle,
+		},
 	)
-	wss.SetUpstreamEventHooks(nameResolver.ObserveMessage, statsModule.HandleUpstreamEvent)
+	wss.SetUpstreamEventHooks(nameResolver.ObserveMessage, statsModule.HandleUpstreamEvent, applyModule.HandleUpstreamEvent)
 	wss.SetBotActionHooks(statsModule.HandleBotAction)
 	wss.SetInternalSendHooks(statsModule.HandleInternalSend)
 

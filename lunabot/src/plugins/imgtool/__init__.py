@@ -11,9 +11,70 @@ logger = get_logger("ImgTool")
 file_db = get_file_db("data/imgtool/db.json", logger)
 cd = ColdDown(file_db, logger)
 gbl = get_group_black_list(file_db, logger, 'imgtool')
+sayings_db = get_file_db("data/imgtool/sayings.json", logger)
+SAYINGS_DIR = 'data/imgtool/sayings'
 
 
-# ============================= cpp程序调用 ============================= # 
+# ======================= 语录存储 ======================= #
+
+@dataclass
+class Saying:
+    sid: int
+    text: str
+    author_name: str
+    author_uid: int
+    group_id: int
+    image_path: str
+    created_by: int
+    created_at: float
+
+
+class SayingManager:
+    _mgr: 'SayingManager' = None
+
+    def __init__(self):
+        self.sid_top = 0
+        self.sayings: dict[int, Saying] = {}
+
+    def _load(self):
+        self.sid_top = sayings_db.get('sid_top', 0)
+        self.sayings = {}
+        for sid, s in sayings_db.get('sayings', {}).items():
+            self.sayings[int(sid)] = Saying(**s)
+        logger.info(f'成功加载{len(self.sayings)}条语录, sid_top={self.sid_top}')
+
+    def _save(self):
+        sayings_db.set('sid_top', self.sid_top)
+        sayings_db.set('sayings', {str(sid): asdict(s) for sid, s in self.sayings.items()})
+        sayings_db.save()
+
+    @classmethod
+    def get(cls) -> 'SayingManager':
+        if cls._mgr is None:
+            cls._mgr = SayingManager()
+            cls._mgr._load()
+        return cls._mgr
+
+    def add_saying(self, saying: Saying):
+        self.sid_top += 1
+        saying.sid = self.sid_top
+        self.sayings[self.sid_top] = saying
+        self._save()
+
+    def get_saying(self, sid: int) -> Saying | None:
+        return self.sayings.get(sid)
+
+    def get_sayings_by_group(self, group_id: int) -> list[Saying]:
+        return [s for s in self.sayings.values() if s.group_id == group_id]
+
+    def del_saying(self, sid: int):
+        saying = self.sayings.pop(sid, None)
+        if saying:
+            remove_file(saying.image_path)
+            self._save()
+
+
+# ============================= cpp程序调用 ============================= #
 
 @dataclass
 class CppImageOutput:
@@ -1462,14 +1523,36 @@ async def _(ctx: HandlerContext):
                 Spacer(10, 32)
                 ImageBox(await download_image(await get_avatar_url_large(ctx.bot, reply_user_id)), size=(256, 256)).set_margin(16)
                 Spacer(10, 32)
-            
+
             with VSplit().set_item_align('c').set_content_align('c').set_sep(8):
                 font_sz = 48
                 TextBox(text, TextStyle(DEFAULT_FONT, font_sz, WHITE), line_count=get_str_line_count(text, line_len) + 1).set_w(font_sz * line_len // 2).set_content_align('l')
                 TextBox(name_text, TextStyle(DEFAULT_FONT, font_sz, WHITE)).set_w(font_sz * line_len // 2).set_content_align('r')
             Spacer(16, 16)
 
-    return await ctx.asend_reply_msg(await get_image_cq(await canvas.get_img()))
+    img = await canvas.get_img()
+
+    os.makedirs(SAYINGS_DIR, exist_ok=True)
+    mgr = SayingManager.get()
+    mgr.sid_top += 1
+    sid = mgr.sid_top
+    img_path = f'{SAYINGS_DIR}/{sid}.png'
+    img.save(img_path)
+
+    saying = Saying(
+        sid=sid,
+        text=text,
+        author_name=reply_user_name,
+        author_uid=reply_user_id,
+        group_id=ctx.group_id,
+        image_path=img_path,
+        created_by=ctx.event.user_id,
+        created_at=datetime.now().timestamp(),
+    )
+    mgr.sayings[sid] = saying
+    mgr._save()
+
+    return await ctx.asend_reply_msg(await get_image_cq(img))
 
 
 # 渲染markdown
@@ -1631,3 +1714,78 @@ async def _(ctx: HandlerContext):
         with TempFilePath("gif") as gif_path:
             await run_in_pool(convert_video_to_gif, video_path, gif_path, args.max_fps, args.max_size, args.max_frame_num)
             return await ctx.asend_reply_msg(await get_image_cq(gif_path))
+
+
+# ======================= 查看语录 ======================= #
+
+def _assert_saying_group_open(ctx: HandlerContext, saying: Saying):
+    if check_superuser(ctx.event):
+        return
+    if is_group_msg(ctx.event) and saying.group_id != ctx.group_id:
+        raise ReplyException(f'语录#{saying.sid}不存在')
+    if not is_group_msg(ctx.event):
+        raise ReplyException('私聊下仅超级管理可查看语录')
+
+
+view_saying = CmdHandler(['/看语录', '/saying view', '/quote view'], logger)
+view_saying.check_cdrate(cd).check_wblist(gbl)
+@view_saying.handle()
+async def _(ctx: HandlerContext):
+    args = ctx.get_args().strip()
+    mgr = SayingManager.get()
+    is_super = check_superuser(ctx.event)
+
+    if args.isdigit():
+        sid = int(args)
+        saying = mgr.get_saying(sid)
+        assert_and_reply(saying is not None, f'语录#{sid}不存在')
+        _assert_saying_group_open(ctx, saying)
+        return await ctx.asend_reply_msg(await get_image_cq(saying.image_path, send_local_file_as_is=True))
+
+    if is_group_msg(ctx.event):
+        candidates = mgr.get_sayings_by_group(ctx.group_id)
+    elif is_super:
+        candidates = list(mgr.sayings.values())
+    else:
+        raise ReplyException('私聊下仅超级管理可查看语录')
+
+    assert_and_reply(candidates, '本群暂无保存的语录')
+    saying = random.choice(candidates)
+    return await ctx.asend_reply_msg(await get_image_cq(saying.image_path, send_local_file_as_is=True))
+
+
+list_sayings = CmdHandler(['/看所有语录', '/saying list', '/quote list'], logger)
+list_sayings.check_cdrate(cd).check_wblist(gbl)
+@list_sayings.handle()
+async def _(ctx: HandlerContext):
+    mgr = SayingManager.get()
+    is_super = check_superuser(ctx.event)
+
+    if is_group_msg(ctx.event):
+        sayings = mgr.get_sayings_by_group(ctx.group_id)
+    elif is_super:
+        sayings = list(mgr.sayings.values())
+    else:
+        raise ReplyException('私聊下仅超级管理可查看所有语录')
+
+    assert_and_reply(sayings, '暂无保存的语录')
+
+    sayings = sorted(sayings, key=lambda s: s.sid, reverse=True)
+    text_lines = [f'共{len(sayings)}条语录:']
+    for s in sayings:
+        preview = s.text.replace('\n', ' ')[:30]
+        text_lines.append(f'  #{s.sid} | {s.author_name} | {preview}')
+    return await ctx.asend_reply_msg('\n'.join(text_lines))
+
+
+del_saying = CmdHandler(['/删语录', '/saying del', '/quote del'], logger)
+del_saying.check_cdrate(cd).check_wblist(gbl).check_superuser()
+@del_saying.handle()
+async def _(ctx: HandlerContext):
+    args = ctx.get_args().strip()
+    assert_and_reply(args.isdigit(), '使用方式: /删语录 <sid>')
+    sid = int(args)
+    saying = SayingManager.get().get_saying(sid)
+    assert_and_reply(saying is not None, f'语录#{sid}不存在')
+    SayingManager.get().del_saying(sid)
+    await ctx.asend_reply_msg(f'语录#{sid}已删除')

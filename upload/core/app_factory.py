@@ -4,6 +4,7 @@ from flask import Flask
 from flask_cors import CORS
 
 from core.runtime import BASE_DIR
+from apply import register_apply_routes
 from routes.help import register_help_routes
 from routes.msr import register_msr_routes
 from routes.proxy import register_proxy_routes
@@ -26,4 +27,5 @@ def create_app() -> Flask:
     register_msr_routes(app)
     register_proxy_routes(app)
     register_help_routes(app)
+    register_apply_routes(app)
     return app

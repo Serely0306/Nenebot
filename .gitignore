@@ -49,6 +49,11 @@
 **/*.dll
 **/*.so
 
+# superpowers 插件数据与设计文档（本地开发用，不提交）
+***/.superpowers/
+.claude
+CLAUDE.md
+
 # 其他自定义
 ZeroBot-Plugin-master/config.json
 ZeroBot-Plugin-master/config1.json
@@ -74,4 +79,8 @@ upload/debug
 upload/tools
 upload/tests
 upload/config.yaml
+upload_v2/tools
+upload_v2/tests
+upload_v2/config.yaml
+package-lock.json
 harukineo/
