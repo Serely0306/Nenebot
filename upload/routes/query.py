@@ -212,6 +212,7 @@ def register_query_routes(app):
         return jsonify({"success": True, "count": len(uid_modes or [])})
 
     @app.route("/status", methods=["GET"])
+    @app.route("/upload/status", methods=["GET"])
     def status():
         config = get_upload_config()
         return jsonify(

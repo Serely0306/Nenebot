@@ -50,6 +50,8 @@ def _check_rate_limit(store: defaultdict[str, list[float]], key: str,
 
 
 APPLY_DIR = Path(__file__).resolve().parent
+PAGES_DIR = APPLY_DIR / "pages"
+STATIC_DIR = APPLY_DIR / "static"
 CONFIG_PATH = APPLY_DIR.parent / "config.yaml"
 
 bp = Blueprint("apply", __name__)
@@ -122,22 +124,22 @@ def _notify_onebot(app_id: str) -> None:
 
 @bp.route("/apply")
 def apply_page():
-    return send_from_directory(str(APPLY_DIR), "apply.html")
+    return send_from_directory(str(PAGES_DIR), "apply.html")
 
 
 @bp.route("/review")
 def review_page():
-    return send_from_directory(str(APPLY_DIR), "review.html")
+    return send_from_directory(str(PAGES_DIR), "review.html")
 
 
 @bp.route("/apply.js")
 def apply_js():
-    return send_from_directory(str(APPLY_DIR), "apply.js")
+    return send_from_directory(str(STATIC_DIR), "apply.js")
 
 
 @bp.route("/review.js")
 def review_js():
-    return send_from_directory(str(APPLY_DIR), "review.js")
+    return send_from_directory(str(STATIC_DIR), "review.js")
 
 
 # ── 公开 API ──

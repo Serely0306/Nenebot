@@ -70,7 +70,35 @@ func (m *Module) Handle(msg *core.OneBotMessage) map[string]interface{} {
 		return buildReply(msg, fmt.Sprintf("未找到申请 %s", arg))
 	}
 
-	rec := &file.Records[idx]
+	// Lock, re-read, apply, write (prevents lost updates against Python process)
+	fsLock, lockErr := acquireFsLock(m.cfg.ApplicationsPath, 5*time.Second)
+	if lockErr != nil {
+		log.Printf("[apply] 获取文件锁失败: %v\n", lockErr)
+		return buildReply(msg, "操作失败，请重试")
+	}
+	defer releaseFsLock(fsLock, m.cfg.ApplicationsPath)
+
+	notifyMu.Lock()
+	defer notifyMu.Unlock()
+
+	file2, err := readApplicationFile(m.cfg.ApplicationsPath)
+	if err != nil {
+		log.Printf("[apply] bot指令重新读取applications.json失败: %v\n", err)
+		return buildReply(msg, "读取申请数据失败")
+	}
+
+	idx2 := -1
+	for i, r := range file2.Records {
+		if r.ID == appID {
+			idx2 = i
+			break
+		}
+	}
+	if idx2 < 0 {
+		return buildReply(msg, fmt.Sprintf("未找到申请 %s", appID))
+	}
+
+	rec2 := &file2.Records[idx2]
 	nowStr := time.Now().UTC().Format(time.RFC3339)
 
 	displayID := appID
@@ -80,13 +108,13 @@ func (m *Module) Handle(msg *core.OneBotMessage) map[string]interface{} {
 
 	switch action {
 	case "/审核通过":
-		if rec.Status != "pending" {
-			return buildReply(msg, fmt.Sprintf("申请 %s 状态为 %s，无法通过", displayID, rec.Status))
+		if rec2.Status != "pending" {
+			return buildReply(msg, fmt.Sprintf("申请 %s 状态为 %s，无法通过", displayID, rec2.Status))
 		}
-		rec.Status = "approved"
-		rec.AdminNote = note
-		rec.ReviewedAt = &nowStr
-		if err := writeApplicationFile(m.cfg.ApplicationsPath, &file); err != nil {
+		rec2.Status = "approved"
+		rec2.AdminNote = note
+		rec2.ReviewedAt = &nowStr
+		if err := writeApplicationFile(m.cfg.ApplicationsPath, &file2); err != nil {
 			log.Printf("[apply] 回写失败: %v\n", err)
 			return buildReply(msg, "操作失败，请重试")
 		}
@@ -94,13 +122,13 @@ func (m *Module) Handle(msg *core.OneBotMessage) map[string]interface{} {
 		return buildReply(msg, fmt.Sprintf("已通过申请 %s", displayID))
 
 	case "/审核拒绝":
-		if rec.Status != "pending" {
-			return buildReply(msg, fmt.Sprintf("申请 %s 状态为 %s，无法拒绝", displayID, rec.Status))
+		if rec2.Status != "pending" {
+			return buildReply(msg, fmt.Sprintf("申请 %s 状态为 %s，无法拒绝", displayID, rec2.Status))
 		}
-		rec.Status = "rejected"
-		rec.AdminNote = note
-		rec.ReviewedAt = &nowStr
-		if err := writeApplicationFile(m.cfg.ApplicationsPath, &file); err != nil {
+		rec2.Status = "rejected"
+		rec2.AdminNote = note
+		rec2.ReviewedAt = &nowStr
+		if err := writeApplicationFile(m.cfg.ApplicationsPath, &file2); err != nil {
 			log.Printf("[apply] 回写失败: %v\n", err)
 			return buildReply(msg, "操作失败，请重试")
 		}

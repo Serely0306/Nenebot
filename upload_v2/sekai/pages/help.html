@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>抓包帮助</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container container-wide">
+        <div class="card">
+            <div class="header">
+                <h1>📚 抓包帮助</h1>
+                <p class="subtitle">提供Android半自动抓包和ios模块抓包的脚本和模块，以及上传入口。</p>
+            </div>
+
+            <div class="help-notice">
+                本处不提供完整教程，仅提供对应的脚本和相应使用方式，需要向详细教程请自行寻炸查阅对应教程。
+                这里的帮助页为 Suite / MySekai 共用说明：iOS 模块中会包含对应抓取规则，catcher 侧则仍按统一教程与配置文件控制。
+            </div>
+
+            <div class="page-actions">
+                <a href="suite" class="btn-secondary">Suite 上传</a>
+                <a href="mysekai" class="btn-secondary">MySekai 上传</a>
+            </div>
+
+            <div class="help-shell">
+                <div class="help-nav" role="tablist" aria-label="帮助分类">
+                    <button class="help-tab-btn active" type="button" data-tab-target="ios-module">iOS 模块抓包</button>
+                    <button class="help-tab-btn" type="button" data-tab-target="android-guide">Android 自动抓包</button>
+                </div>
+
+                <div class="help-content">
+                    <div class="message" id="helpMessage"></div>
+
+                    <section class="help-panel active" id="panel-ios-module" data-tab-panel="ios-module">
+                        <div class="help-section-header">
+                            <div>
+                                <h2>iOS 模块抓包</h2>
+                                <p class="help-panel-desc">页面内查看模块内容并直接复制。模块支持国服日服的suite以及日服mysekai</p>
+                            </div>
+                            <div class="help-actions">
+                                <button class="btn-secondary" type="button" id="copyIosModuleBtn">复制模块</button>
+                                <a href="help/ios" target="_blank" rel="noreferrer" class="btn-secondary">打开原始模块</a>
+                            </div>
+                        </div>
+                        <pre class="help-code-block" id="iosModuleContent">点击当前标签后将自动加载模块内容...</pre>
+                    </section>
+
+                    <section class="help-panel" id="panel-android-guide" data-tab-panel="android-guide">
+                        <div class="help-section-header">
+                            <div>
+                                <h2>Android 半自动抓包</h2>
+                                <p class="help-panel-desc">为虚拟机的半自动抓包脚本，并提供简要使用说明，具体请自行寻找相关教程</p>
+                            </div>
+                            <div class="help-actions">
+                                <a href="download/catcher.sh" class="btn-secondary">下载 catcher.sh</a>
+                                <a href="download/kill-catcher.sh" class="btn-secondary">下载停止脚本</a>
+                                <a href="download/uninstall-catcher.sh" class="btn-secondary">下载卸载脚本</a>
+                            </div>
+                        </div>
+                        <pre class="help-code-block" id="androidGuideContent">点击当前标签后将自动加载 Android 使用方式...</pre>
+                    </section>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer">
+            <p>Nene-LunaBot Upload Help</p>
+        </footer>
+    </div>
+
+    <script src="help.js"></script>
+</body>
+
+</html>

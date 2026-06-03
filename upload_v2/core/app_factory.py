@@ -4,17 +4,15 @@ from flask import Flask
 from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from core.runtime import BASE_DIR
 from apply import register_apply_routes
-from routes.help import register_help_routes
-from routes.msr import register_msr_routes
-from routes.proxy import register_proxy_routes
-from routes.query import register_query_routes
-from routes.static import register_static_routes
+from sekai.bot_api import bp as sekai_bot_api_bp
+from sekai.ingest_api import bp as sekai_ingest_api_bp
+from sekai.web import bp as sekai_web_bp
+from site_root import site_bp
 
 
 def create_app() -> Flask:
-    app = Flask(__name__, static_folder=str(BASE_DIR), static_url_path="")
+    app = Flask(__name__, static_folder=None)
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
     app.config["JSON_AS_ASCII"] = False
     try:
@@ -24,10 +22,9 @@ def create_app() -> Flask:
     CORS(app)
     app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 
-    register_static_routes(app)
-    register_query_routes(app)
-    register_msr_routes(app)
-    register_proxy_routes(app)
-    register_help_routes(app)
+    app.register_blueprint(site_bp)
+    app.register_blueprint(sekai_web_bp)
+    app.register_blueprint(sekai_ingest_api_bp)
+    app.register_blueprint(sekai_bot_api_bp)
     register_apply_routes(app)
     return app

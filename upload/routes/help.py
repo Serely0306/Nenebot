@@ -16,16 +16,19 @@ def register_help_routes(app):
         return request.headers.get("X-Forwarded-Host") or request.headers.get("Host", "")
 
     @app.route("/help/ios", methods=["GET"])
+    @app.route("/upload/help/ios", methods=["GET"])
     def all_help_ios():
         host = get_request_host()
         return build_all_help_ios(host), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
     @app.route("/help/android", methods=["GET"])
+    @app.route("/upload/help/android", methods=["GET"])
     def help_android():
         host = get_request_host()
         return build_mysekai_help_android(host), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
     @app.route("/public/scripts/upload.js", methods=["GET"])
+    @app.route("/upload/public/scripts/upload.js", methods=["GET"])
     def ios_upload_script():
         host = get_request_host()
         region = request.args.get("region", "cn").lower()
@@ -39,11 +42,13 @@ def register_help_routes(app):
         }
 
     @app.route("/scripts/kill", methods=["GET"])
+    @app.route("/upload/scripts/kill", methods=["GET"])
     def killcatcher():
         scripts_dir = CATCHER_DIR / "scripts"
         return send_from_directory(str(scripts_dir), "kill-catcher.sh", mimetype="text/x-shellscript")
 
     @app.route("/download/<filename>")
+    @app.route("/upload/download/<filename>")
     def download_file(filename):
         if filename not in DOWNLOAD_FILES:
             return jsonify({"error": "文件不存在"}), 404

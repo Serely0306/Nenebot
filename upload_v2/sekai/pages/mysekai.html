@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MySekai 数据上传</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="header">
+                <h1>🎵 MySekai 数据上传</h1>
+                <p class="subtitle">上传你的 MySekai 抓包数据到 Nene-LunaBot</p>
+            </div>
+
+            <!-- 步骤 1: 选择区服和输入 QQ -->
+            <div id="step1" class="step">
+                <div class="step-header">
+                    <span class="step-number">1</span>
+                    <span class="step-title">选择区服并查询绑定账号</span>
+                </div>
+
+                <div class="form-group">
+                    <label for="region">游戏区服</label>
+                    <select id="region" class="select">
+                        <option value="jp">🇯🇵 日服 (JP)</option>
+                        <option value="cn">🇨🇳 国服 (CN)</option>
+                        <!--
+                        <option value="tw">🇹🇼 台服 (TW)</option>
+                        <option value="kr">🇰🇷 韩服 (KR)</option>
+                        <option value="en">🌐 国际服 (EN)</option>.
+                        -->
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="qqId">你的 QQ 号</label>
+                    <input type="text" id="qqId" class="input" placeholder="请输入你在 Nene-LunaBot 绑定账号时使用的 QQ 号">
+                </div>
+
+                <button class="btn-query" id="queryBtn">
+                    <span class="btn-text">查询绑定账号</span>
+                    <span class="btn-icon">🔍</span>
+                </button>
+
+                <div class="query-result" id="queryResult" style="display: none;"></div>
+            </div>
+
+            <!-- 步骤 2: 选择账号 -->
+            <div id="step2" class="step" style="display: none;">
+                <div class="step-header">
+                    <span class="step-number">2</span>
+                    <span class="step-title">选择要上传数据的账号</span>
+                </div>
+
+                <div class="accounts-list" id="accountsList"></div>
+            </div>
+
+            <!-- 步骤 3: 上传文件 -->
+            <div id="step3" class="step" style="display: none;">
+                <div class="step-header">
+                    <span class="step-number">3</span>
+                    <span class="step-title">上传 MySekai 数据文件</span>
+                </div>
+
+                <div class="selected-account-info" id="selectedAccountInfo"></div>
+
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📁</div>
+                    <p class="upload-text">拖拽文件到此处，或点击选择文件</p>
+                    <p class="upload-hint">请上传已解密过的JSON 格式文件</p>
+                    <input type="file" id="fileInput"
+                        accept=".json,.bin,.msgpack,.dat,application/json,application/octet-stream,*/*" hidden>
+                </div>
+
+                <div class="file-info" id="fileInfo" style="display: none;">
+                    <div class="file-name" id="fileName"></div>
+                    <div class="file-size" id="fileSize"></div>
+                    <button class="btn-clear" id="clearFile">✕</button>
+                </div>
+
+                <div class="progress-container" id="progressContainer" style="display: none;">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">准备上传...</div>
+                </div>
+
+                <button class="btn-upload" id="uploadBtn" disabled>
+                    <span class="btn-text">上传数据</span>
+                    <span class="btn-icon">→</span>
+                </button>
+            </div>
+
+            <div class="message" id="message"></div>
+
+            <div class="help-section">
+                <h3>📖 使用说明</h3>
+                <ol>
+                    <li>选择你的游戏区服，输入你在 Nene-LunaBot 绑定时使用的 QQ 号</li>
+                    <li>点击查询后，选择你要上传数据的游戏账号</li>
+                    <li>上传抓包得到的 MySekai 数据文件（抓包后请自行解密）：
+                        <ul style="margin-top: 6px; color: var(--text-muted);">
+                            <li><strong>.json 文件</strong> - 已解密的 JSON 数据</li>
+                        </ul>
+                    </li>
+                    <li>上传成功后，可在 Nene-LunaBot 中使用 /msr 等相关功能</li>
+                </ol>
+            </div>
+
+            <!--
+            <div class="tools-section"
+                style="margin-top: 24px; border-top: 1px solid var(--border); padding-top: 20px;">
+                <h3>🔧 自动抓包配置</h3>
+                <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 12px;">
+                    如果你有 iOS (Surge/Loon/Shadowrocket) 或 Android 抓包工具，可以使用模块实现自动上传。
+                </p>
+                <div class="tools-buttons" style="display: flex; gap: 10px;">
+                    <a href="mysekai/help/ios" target="_blank" class="btn-tool"
+                        style="flex:1; text-align:center; padding: 10px; background: rgba(52, 152, 219, 0.2); border: 1px solid rgba(52, 152, 219, 0.4); border-radius: 8px; color: #3498db; text-decoration: none; font-size: 0.9rem;">
+                        🍎 iOS 模块配置
+                    </a>
+                    <a href="mysekai/help/android" target="_blank" class="btn-tool"
+                        style="flex:1; text-align:center; padding: 10px; background: rgba(46, 204, 113, 0.2); border: 1px solid rgba(46, 204, 113, 0.4); border-radius: 8px; color: #2ecc71; text-decoration: none; font-size: 0.9rem;">
+                        🤖 Android 指南
+                    </a>
+                </div>
+            </div>
+            -->
+        </div>
+
+        <footer class="footer">
+            <p>Nene-LunaBot MySekai Upload Service v2.0</p>
+        </footer>
+    </div>
+
+    <script>
+        // 设置上传类型为 mysekai，使用查询绑定模式
+        window.UPLOAD_DATA_TYPE = 'mysekai';
+        window.UPLOAD_MODE = 'query';
+    </script>
+    <script src="script.js"></script>
+</body>
+
+</html>

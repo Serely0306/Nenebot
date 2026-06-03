@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,6 +50,33 @@ type appRecord struct {
 }
 
 var notifyMu sync.Mutex
+
+func fsLockPath(appPath string) string {
+	return filepath.Join(filepath.Dir(appPath), ".applications.lock")
+}
+
+func acquireFsLock(appPath string, timeout time.Duration) (*os.File, error) {
+	lockPath := fsLockPath(appPath)
+	deadline := time.Now().Add(timeout)
+	for {
+		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			return f, nil
+		}
+		if !os.IsExist(err) {
+			return nil, err
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("acquire fs lock timeout")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func releaseFsLock(f *os.File, appPath string) {
+	f.Close()
+	os.Remove(fsLockPath(appPath))
+}
 
 func (m *Module) HandleNotify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -95,71 +123,104 @@ func (m *Module) HandleNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Verify group
+	// 3. Verify group (no lock held — network call may take seconds)
 	verifyResult, verifyNote, memberCount, groupName := verifyGroup(m.wss, rec.GroupID)
+
+	// 4. Lock, re-read, apply, write (prevents lost updates against Python process)
+	fsLock, lockErr := acquireFsLock(m.cfg.ApplicationsPath, 5*time.Second)
+	if lockErr != nil {
+		log.Printf("[apply] 获取文件锁失败: %v\n", lockErr)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer releaseFsLock(fsLock, m.cfg.ApplicationsPath)
+
+	notifyMu.Lock()
+	defer notifyMu.Unlock()
+
+	file2, err := readApplicationFile(m.cfg.ApplicationsPath)
+	if err != nil {
+		log.Printf("[apply] 重新读取 applications.json 失败: %v\n", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	idx2 := -1
+	for i, r := range file2.Records {
+		if r.ID == req.AppID {
+			idx2 = i
+			break
+		}
+	}
+	if idx2 < 0 {
+		http.Error(w, "application not found", http.StatusNotFound)
+		return
+	}
+
+	rec2 := &file2.Records[idx2]
+	if rec2.Status != "pending" || rec2.Verified != nil {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"already_verified"}`))
+		return
+	}
+
 	if verifyResult {
 		if memberCount > 0 {
-			rec.MemberCount = memberCount
+			rec2.MemberCount = memberCount
 		}
 		if groupName != "" {
-			rec.GroupName = groupName
+			rec2.GroupName = groupName
 		}
-		// Fetch applicant nickname for display
-		if applicantID, err := strconv.ParseInt(rec.Applicant, 10, 64); err == nil {
+		if applicantID, err := strconv.ParseInt(rec2.Applicant, 10, 64); err == nil {
 			if resp, err := m.wss.CallAPI("get_stranger_info", map[string]interface{}{
 				"user_id":  applicantID,
 				"no_cache": true,
 			}, 3*time.Second); err == nil {
 				if data, ok := resp["data"].(map[string]interface{}); ok {
 					if nick, ok := data["nickname"].(string); ok {
-						rec.ApplicantNickname = nick
+						rec2.ApplicantNickname = nick
 					}
 				}
 			}
 		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	rec.Verified = &verifyResult
-	rec.VerifiedAt = &now
-	rec.VerificationNote = &verifyNote
+	rec2.Verified = &verifyResult
+	rec2.VerifiedAt = &now
+	rec2.VerificationNote = &verifyNote
 
-	// 4. Fraud tracking
 	if !verifyResult && strings.Contains(verifyNote, "不存在") {
-		// Confirmed fake
-		ip := rec.ClientIP
-		if file.Meta.IPFakeCounts == nil {
-			file.Meta.IPFakeCounts = make(map[string]int)
+		ip := rec2.ClientIP
+		if file2.Meta.IPFakeCounts == nil {
+			file2.Meta.IPFakeCounts = make(map[string]int)
 		}
-		file.Meta.IPFakeCounts[ip] = file.Meta.IPFakeCounts[ip] + 1
-		count := file.Meta.IPFakeCounts[ip]
+		file2.Meta.IPFakeCounts[ip] = file2.Meta.IPFakeCounts[ip] + 1
+		count := file2.Meta.IPFakeCounts[ip]
 		log.Printf("[apply] IP %s 虚假申请计数: %d\n", ip, count)
 		if count >= 3 {
 			inList := false
-			for _, b := range file.Meta.IPBlacklist {
+			for _, b := range file2.Meta.IPBlacklist {
 				if b == ip {
 					inList = true
 					break
 				}
 			}
 			if !inList {
-				file.Meta.IPBlacklist = append(file.Meta.IPBlacklist, ip)
+				file2.Meta.IPBlacklist = append(file2.Meta.IPBlacklist, ip)
 				log.Printf("[apply] IP %s 已加入黑名单\n", ip)
 			}
 		}
-		rec.Status = "rejected"
-		rec.AdminNote = "群号不存在，虚假信息计次+1，超过三次封锁对应IP，请谨慎提交"
+		rec2.Status = "rejected"
+		rec2.AdminNote = "群号不存在，虚假信息计次+1，超过三次封锁对应IP，请谨慎提交"
 	} else if !verifyResult {
-		// Uncertain
-		rec.AdminNote = "无法验证群号存在（可能原因：群设置了不允许被搜索、群已解散、网络超时），待人工核实中"
+		rec2.AdminNote = "无法验证群号存在（可能原因：群设置了不允许被搜索、群已解散、网络超时），待人工核实中"
 	}
 
-	// 5. Write back
-	if err := writeApplicationFile(m.cfg.ApplicationsPath, &file); err != nil {
+	if err := writeApplicationFile(m.cfg.ApplicationsPath, &file2); err != nil {
 		log.Printf("[apply] 回写 applications.json 失败: %v\n", err)
 	}
 
-	// 6. Notify SuperUsers (async, don't block response)
-	go m.notifySuperUsers(rec, verifyResult, verifyNote)
+	go m.notifySuperUsers(rec2, verifyResult, verifyNote)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
@@ -272,11 +333,35 @@ func readApplicationFile(path string) (applicationFile, error) {
 }
 
 func writeApplicationFile(path string, file *applicationFile) error {
-	notifyMu.Lock()
-	defer notifyMu.Unlock()
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	success := false
+	defer func() {
+		if !success {
+			tmpFile.Close()
+			os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmpFile.Write(data); err != nil {
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	success = true
+	return nil
 }
