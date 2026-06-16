@@ -89,5 +89,6 @@ func registerHarukiSekaiAPIRoutes(app *fiber.App) {
 	api.Get("/information", getInformation)
 	api.Get("/event/:event_id/ranking-top100", getEventRankingTop100)
 	api.Get("/event/:event_id/ranking-border", getEventRankingBorder)
+	api.Get("/activity/wish-ranking/top-ladder", getCNWishRankingTopLadder)
 
 }
