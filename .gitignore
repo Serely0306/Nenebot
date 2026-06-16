@@ -49,29 +49,19 @@
 **/*.dll
 **/*.so
 
-# superpowers 插件数据与设计文档（本地开发用，不提交）
-***/.superpowers/
-.claude
-CLAUDE.md
-
 # 其他自定义
 ZeroBot-Plugin-master/config.json
 ZeroBot-Plugin-master/config1.json
-haruki/
 **/.gitignore
-sync.ps1
-sync.cmd
-haruki-tool/Haruki-Sekai-Asset-Updater
-haruki-tool/Haruki-Toolbox-Backend
-haruki-tool/HarukiBot-Docs
-haruki-tool/Haruki-Sekai-API/jp
-haruki-tool/Haruki-Sekai-API/cn
-lunabot-latest
 lunabot/config/
 scripts/
 OneBotFilter/assets
 OneBotFilter/docs
 OneBotFilter/config
+nenebot_core/assets
+nenebot_core/docs
+nenebot_core/config
+nenebot_core/scripts
 catcher/Catcher-android-arm64
 catcher/Catcher-android-arm64-test
 catcher/config-android.yaml
@@ -82,5 +72,8 @@ upload/config.yaml
 upload_v2/tools
 upload_v2/tests
 upload_v2/config.yaml
-package-lock.json
+Nenebot_tools/tools
+Nenebot_tools/tests
+Nenebot_tools/config.yaml
 harukineo/
+haruki-tool/Haruki-Sekai-API/haruki-sekai-configs.yaml
