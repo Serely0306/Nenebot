@@ -1,5 +1,6 @@
 from .utils import *
 from aiohttp import ClientSession, ClientConnectionError, ClientTimeout
+from dataclasses import fields
 
 REQUEST_TIMEOUT = 5.0
 
@@ -29,6 +30,7 @@ class GameApiConfig:
     mysekai_upload_time_api_url: Optional[str] = None 
     update_msr_sub_api_url: Optional[str] = None
     ranking_api_url: Optional[str] = None
+    wish_ranking_api_url: Optional[str] = None
     ranking_border_api_url: Optional[str] = None
     ranking_top100_api_url: Optional[str] = None
     ranking_near_user_api_url: Optional[str] = None
@@ -41,7 +43,9 @@ class GameApiConfig:
 
 # 获取游戏api相关配置
 def get_gameapi_config(region: str) -> GameApiConfig:
-    return GameApiConfig(**(gameapi_config.get(region, {})))
+    data = gameapi_config.get(region, {}) or {}
+    allowed = {f.name for f in fields(GameApiConfig)}
+    return GameApiConfig(**{k: v for k, v in data.items() if k in allowed})
 
 
 # 请求游戏API data_type: json/bytes/None
