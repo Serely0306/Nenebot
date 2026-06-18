@@ -15,6 +15,7 @@ from .cr_test import *
 from .resbox import *
 from .score import *
 from .sk import *
+from .wish import *
 from .stamp import *
 from .stamp_maker import *
 from .vlive import *

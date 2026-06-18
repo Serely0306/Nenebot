@@ -14,6 +14,7 @@ class GameApiConfig:
     mysekai_upload_time_api_url: Optional[str] = None 
     update_msr_sub_api_url: Optional[str] = None
     ranking_api_url: Optional[str] = None
+    wish_ranking_api_url: Optional[str] = None
     send_boost_api_url: Optional[str] = None
     create_account_api_url: Optional[str] = None
     ad_result_update_time_api_url: Optional[str] = None

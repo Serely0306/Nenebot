@@ -243,6 +243,10 @@ sk:
       error_retry_minutes: 10
       url: https://jiiku831.github.io/{region}data/sekarun.js
       ranks: [10, 30, 50, 100, 200, 300, 500, 1000, 2000, 3000, 5000, 10000, 50000, 100000]
+
+wish:
+  refresh_hour: 4
+  check_interval_seconds: 600
 chart:
   style_sheet_name: black
   target_segment_seconds: 6.0
