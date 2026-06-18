@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -67,6 +68,13 @@ type cnWishRankingExecValue struct {
 	TopN   []map[string]any `json:"topN"`
 }
 
+type cnWishRankingPeriodInfo struct {
+	PeriodIndex int   `json:"period_index"`
+	PeriodTotal int   `json:"period_total"`
+	StartAt     int64 `json:"start_at"`
+	EndAt       int64 `json:"end_at"`
+}
+
 func getCNWishRankingTopLadder(c fiber.Ctx) error {
 	region, mgr, err := getMgr(c)
 	if err != nil {
@@ -82,13 +90,26 @@ func getCNWishRankingTopLadder(c fiber.Ctx) error {
 	}
 
 	activityID := c.Query("activity_id")
+	var newsItems []cnWishRankingNewsItem
 	if activityID == "" {
 		ctx, cancel := context.WithTimeout(c.RequestCtx(), 20*time.Second)
 		defer cancel()
 
-		activityID, err = fetchCNWishRankingActivityID(ctx, mgr.Proxy)
+		newsItems, err = fetchCNWishRankingNewsItems(ctx, mgr.Proxy)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadGateway, fmt.Sprintf("fetch wish ranking news failed: %v", err))
+		}
+		activityID, err = pickCNWishRankingActivityID(newsItems, time.Now().In(loadCNWishRankingLocation()))
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadGateway, fmt.Sprintf("resolve activity_id failed: %v", err))
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(c.RequestCtx(), 20*time.Second)
+		defer cancel()
+
+		newsItems, err = fetchCNWishRankingNewsItems(ctx, mgr.Proxy)
+		if err != nil {
+			newsItems = nil
 		}
 	}
 
@@ -99,7 +120,11 @@ func getCNWishRankingTopLadder(c fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadGateway, fmt.Sprintf("fetch wish ranking failed: %v", err))
 	}
-	result, err := buildCNWishRankingResult(activityID, pages)
+	var periodInfo *cnWishRankingPeriodInfo
+	if len(newsItems) > 0 {
+		periodInfo, _ = resolveCNWishRankingPeriodInfo(activityID, newsItems)
+	}
+	result, err := buildCNWishRankingResult(activityID, pages, periodInfo)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadGateway, fmt.Sprintf("parse wish ranking failed: %v", err))
 	}
@@ -168,7 +193,7 @@ func fetchCNWishRankingPages(ctx context.Context, proxy, accessToken, activityID
 	return pages, nil
 }
 
-func buildCNWishRankingResult(activityID string, pages []cnWishRankingExecResponse) (map[string]any, error) {
+func buildCNWishRankingResult(activityID string, pages []cnWishRankingExecResponse, periodInfo *cnWishRankingPeriodInfo) (map[string]any, error) {
 	if len(pages) == 0 {
 		return nil, fmt.Errorf("no ranking pages fetched")
 	}
@@ -189,12 +214,21 @@ func buildCNWishRankingResult(activityID string, pages []cnWishRankingExecRespon
 		"page_size":   cnWishRankingDefaultPageSize,
 		"page_count":  len(pages),
 		"total_count": len(topN),
+		"period_info": periodInfo,
 		"ladder":      ladder,
 		"topN":        topN,
 	}, nil
 }
 
 func fetchCNWishRankingActivityID(ctx context.Context, proxy string) (string, error) {
+	items, err := fetchCNWishRankingNewsItems(ctx, proxy)
+	if err != nil {
+		return "", err
+	}
+	return pickCNWishRankingActivityID(items, time.Now().In(loadCNWishRankingLocation()))
+}
+
+func fetchCNWishRankingNewsItems(ctx context.Context, proxy string) ([]cnWishRankingNewsItem, error) {
 	client := newCNWishRankingHTTPClient(proxy)
 	resp, err := client.R().
 		SetContext(ctx).
@@ -210,21 +244,20 @@ func fetchCNWishRankingActivityID(ctx context.Context, proxy string) (string, er
 		}).
 		Get(cnWishRankingBaseURL + cnWishRankingNewsPath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if resp.StatusCode() != http.StatusOK {
-		return "", fmt.Errorf("news search returned status %d", resp.StatusCode())
+		return nil, fmt.Errorf("news search returned status %d", resp.StatusCode())
 	}
 
 	var result cnWishRankingNewsResponse
 	if err := json.Unmarshal(resp.Body(), &result); err != nil {
-		return "", fmt.Errorf("decode news search response failed: %w", err)
+		return nil, fmt.Errorf("decode news search response failed: %w", err)
 	}
 	if result.Code != 0 {
-		return "", fmt.Errorf("news search failed: %s", result.Message)
+		return nil, fmt.Errorf("news search failed: %s", result.Message)
 	}
-
-	return pickCNWishRankingActivityID(result.Data.PageNews, time.Now().In(loadCNWishRankingLocation()))
+	return result.Data.PageNews, nil
 }
 
 func pickCNWishRankingActivityID(items []cnWishRankingNewsItem, now time.Time) (string, error) {
@@ -277,6 +310,53 @@ func pickCNWishRankingActivityID(items []cnWishRankingNewsItem, now time.Time) (
 	default:
 		return "", fmt.Errorf("no activity_id found in news list")
 	}
+}
+
+func resolveCNWishRankingPeriodInfo(activityID string, items []cnWishRankingNewsItem) (*cnWishRankingPeriodInfo, error) {
+	type candidate struct {
+		activityID string
+		start      time.Time
+		end        time.Time
+	}
+
+	candidates := make([]candidate, 0, len(items))
+	for _, item := range items {
+		parts := parseCNWishRankingKeyword(item.Keyword)
+		curActivityID := strings.TrimSpace(parts["activityId"])
+		if curActivityID == "" {
+			continue
+		}
+		start := parseCNWishRankingTime(parts["startTime"])
+		end := parseCNWishRankingTime(parts["endTime"])
+		if start.IsZero() || end.IsZero() {
+			continue
+		}
+		candidates = append(candidates, candidate{
+			activityID: curActivityID,
+			start:      start,
+			end:        end,
+		})
+	}
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no valid period info found")
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].start.Before(candidates[j].start)
+	})
+
+	for i, candidate := range candidates {
+		if candidate.activityID != activityID {
+			continue
+		}
+		return &cnWishRankingPeriodInfo{
+			PeriodIndex: i + 1,
+			PeriodTotal: len(candidates),
+			StartAt:     candidate.start.Unix(),
+			EndAt:       candidate.end.Unix(),
+		}, nil
+	}
+	return nil, fmt.Errorf("activity_id %s not found in period list", activityID)
 }
 
 func parseCNWishRankingKeyword(keyword string) map[string]string {
