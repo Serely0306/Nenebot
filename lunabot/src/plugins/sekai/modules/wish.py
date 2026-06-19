@@ -9,13 +9,13 @@ from .sk import (
     get_board_score_str,
     get_rank_from_text,
     is_rank_text,
-    SK_TEXT_QUERY_BG_COLOR,
 )
 from .event import get_current_event, get_event_banner_img
 import aiosqlite
 import asyncio
 import hashlib
 import json
+from dataclasses import replace
 
 
 CN_WISH_REGION = "cn"
@@ -25,6 +25,12 @@ WISH_REFRESH_HOUR_CFG = config.item("wish.refresh_hour")
 WISH_CHECK_INTERVAL_CFG = config.item("wish.check_interval_seconds")
 WISH_QUERY_MAX_RANK = 500
 WISH_QUERY_MAX_RANK_COUNT = 20
+WISH_QUERY_CACHE_SECONDS = 600
+WISH_REFRESH_STABLE_COUNT = 3
+WISH_OFFICIAL_SNAPSHOT_TABLE = "official_snapshot"
+WISH_OFFICIAL_RANKING_TABLE = "official_ranking"
+WISH_LEGACY_SNAPSHOT_TABLE = "snapshot"
+WISH_LEGACY_RANKING_TABLE = "ranking"
 WISH_LINE_RANKS = [
     1, 10, 20, 30, 40, 50,
     100, 200, 300, 400, 500,
@@ -34,8 +40,12 @@ WISH_LINE_RANKS = [
 
 _wish_conn: Optional[aiosqlite.Connection] = None
 _wish_tables_created = False
-_wish_sync_lock = asyncio.Lock()
 _wish_columns_checked = False
+_wish_bootstrap_checked = False
+_wish_live_fetch_lock = asyncio.Lock()
+_wish_live_cache: Optional["WishLiveCache"] = None
+_wish_refresh_probe_key: Optional[Tuple[str, str, str]] = None
+_wish_refresh_probe_count = 0
 
 
 def load_wish_location():
@@ -57,6 +67,11 @@ def from_wish_timestamp(ts: int | float) -> datetime:
 def get_today_refresh_time(now: datetime = None) -> datetime:
     now = now or get_wish_now_naive()
     return now.replace(hour=WISH_REFRESH_HOUR_CFG.get(), minute=0, second=0, microsecond=0)
+
+
+def get_wish_refresh_date(now: datetime = None) -> str:
+    now = now or get_wish_now_naive()
+    return now.strftime("%Y-%m-%d")
 
 
 @dataclass
@@ -98,9 +113,7 @@ class WishRankingEntry:
         return {
             "rank": self.rank,
             "role_id": self.role_id,
-            "role_name": self.role_name,
             "pt": self.pt,
-            "server_id": self.server_id,
             "list_type": self.list_type,
         }
 
@@ -131,7 +144,6 @@ class WishPeriodInfo:
 @dataclass
 class WishHeaderInfo:
     title: str
-    current_title: str
     current_event: Optional[dict]
     current_banner: Optional[Image.Image]
     current_start_at: Optional[datetime]
@@ -141,7 +153,6 @@ class WishHeaderInfo:
     period_remaining_text: str
     remaining_event_count: Optional[int]
     t500_score_text: str
-    latest_rt_text: str
     next_event: Optional[dict]
     next_start_at: Optional[datetime]
     next_banner: Optional[Image.Image]
@@ -152,9 +163,11 @@ class WishRankingSnapshot:
     id: int
     activity_id: str
     process_id: str
+    refresh_date: str
     fetched_at: datetime
     total_count: int
     content_hash: str = ""
+    compare_hash: str = ""
     period_info: Optional[WishPeriodInfo] = None
     ladder: List[WishRankingEntry] = field(default_factory=list)
     topN: List[WishRankingEntry] = field(default_factory=list)
@@ -162,22 +175,30 @@ class WishRankingSnapshot:
     @classmethod
     def from_row(cls, row):
         period_info = None
-        if len(row) >= 10 and row[6] and row[8] and row[9]:
+        if len(row) >= 12 and row[10] and row[11]:
             period_info = WishPeriodInfo(
-                period_index=int(row[6] or 0),
-                period_total=int(row[7] or 0),
-                start_at=from_wish_timestamp(row[8]),
-                end_at=from_wish_timestamp(row[9]),
+                period_index=int(row[8] or 0),
+                period_total=int(row[9] or 0),
+                start_at=from_wish_timestamp(row[10]),
+                end_at=from_wish_timestamp(row[11]),
             )
         return cls(
             id=row[0],
             activity_id=row[1],
             process_id=row[2],
-            fetched_at=from_wish_timestamp(row[3]),
-            total_count=row[4],
-            content_hash=row[5],
+            refresh_date=row[3] or "",
+            fetched_at=from_wish_timestamp(row[4]),
+            total_count=row[5],
+            content_hash=row[6],
+            compare_hash=row[7] or "",
             period_info=period_info,
         )
+
+
+@dataclass
+class WishLiveCache:
+    snapshot: WishRankingSnapshot
+    expire_at: datetime
 
 
 async def get_wish_conn(create: bool = True) -> Optional[aiosqlite.Connection]:
@@ -185,7 +206,7 @@ async def get_wish_conn(create: bool = True) -> Optional[aiosqlite.Connection]:
     if not create and not os.path.exists(WISH_DB_PATH):
         return None
 
-    global _wish_conn, _wish_tables_created, _wish_columns_checked
+    global _wish_conn, _wish_tables_created, _wish_columns_checked, _wish_bootstrap_checked
     if _wish_conn is None:
         _wish_conn = await aiosqlite.connect(WISH_DB_PATH)
         await _wish_conn.execute("PRAGMA journal_mode=WAL;")
@@ -193,22 +214,25 @@ async def get_wish_conn(create: bool = True) -> Optional[aiosqlite.Connection]:
         logger.info(f"连接sqlite数据库 {WISH_DB_PATH} 成功")
 
     if not _wish_tables_created:
-        await _wish_conn.execute("""
-            CREATE TABLE IF NOT EXISTS snapshot (
+        await _wish_conn.execute(f"""
+            CREATE TABLE IF NOT EXISTS {WISH_OFFICIAL_SNAPSHOT_TABLE} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 activity_id TEXT NOT NULL,
                 process_id TEXT NOT NULL,
+                refresh_date TEXT NOT NULL,
                 fetched_at INTEGER NOT NULL,
                 total_count INTEGER NOT NULL,
-                content_hash TEXT NOT NULL UNIQUE,
+                content_hash TEXT NOT NULL,
+                compare_hash TEXT NOT NULL,
                 period_index INTEGER,
                 period_total INTEGER,
                 period_start_at INTEGER,
-                period_end_at INTEGER
+                period_end_at INTEGER,
+                UNIQUE(refresh_date)
             )
         """)
-        await _wish_conn.execute("""
-            CREATE TABLE IF NOT EXISTS ranking (
+        await _wish_conn.execute(f"""
+            CREATE TABLE IF NOT EXISTS {WISH_OFFICIAL_RANKING_TABLE} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 snapshot_id INTEGER NOT NULL,
                 list_type TEXT NOT NULL,
@@ -217,45 +241,79 @@ async def get_wish_conn(create: bool = True) -> Optional[aiosqlite.Connection]:
                 role_name TEXT NOT NULL,
                 pt INTEGER NOT NULL,
                 server_id INTEGER NOT NULL,
-                FOREIGN KEY(snapshot_id) REFERENCES snapshot(id) ON DELETE CASCADE
+                FOREIGN KEY(snapshot_id) REFERENCES {WISH_OFFICIAL_SNAPSHOT_TABLE}(id) ON DELETE CASCADE
             )
         """)
-        await _wish_conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_wish_snapshot_activity_time
-            ON snapshot (activity_id, fetched_at DESC, id DESC)
+        await _wish_conn.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_wish_official_snapshot_activity_time
+            ON {WISH_OFFICIAL_SNAPSHOT_TABLE} (activity_id, refresh_date DESC, fetched_at DESC, id DESC)
         """)
-        await _wish_conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_wish_ranking_snapshot_list_rank
-            ON ranking (snapshot_id, list_type, rank)
+        await _wish_conn.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_wish_official_snapshot_compare
+            ON {WISH_OFFICIAL_SNAPSHOT_TABLE} (activity_id, compare_hash, refresh_date DESC, id DESC)
         """)
-        await _wish_conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_wish_ranking_snapshot_role
-            ON ranking (snapshot_id, role_id)
+        await _wish_conn.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_wish_official_ranking_snapshot_list_rank
+            ON {WISH_OFFICIAL_RANKING_TABLE} (snapshot_id, list_type, rank)
+        """)
+        await _wish_conn.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_wish_official_ranking_snapshot_role
+            ON {WISH_OFFICIAL_RANKING_TABLE} (snapshot_id, role_id)
         """)
         await _wish_conn.commit()
         _wish_tables_created = True
 
     if not _wish_columns_checked:
-        cursor = await _wish_conn.execute("PRAGMA table_info(snapshot)")
+        cursor = await _wish_conn.execute(f"PRAGMA table_info({WISH_OFFICIAL_SNAPSHOT_TABLE})")
         rows = await cursor.fetchall()
         await cursor.close()
         columns = {row[1] for row in rows}
         alter_sqls = []
+        if "refresh_date" not in columns:
+            alter_sqls.append(f"ALTER TABLE {WISH_OFFICIAL_SNAPSHOT_TABLE} ADD COLUMN refresh_date TEXT")
+        if "compare_hash" not in columns:
+            alter_sqls.append(f"ALTER TABLE {WISH_OFFICIAL_SNAPSHOT_TABLE} ADD COLUMN compare_hash TEXT")
         if "period_index" not in columns:
-            alter_sqls.append("ALTER TABLE snapshot ADD COLUMN period_index INTEGER")
+            alter_sqls.append(f"ALTER TABLE {WISH_OFFICIAL_SNAPSHOT_TABLE} ADD COLUMN period_index INTEGER")
         if "period_total" not in columns:
-            alter_sqls.append("ALTER TABLE snapshot ADD COLUMN period_total INTEGER")
+            alter_sqls.append(f"ALTER TABLE {WISH_OFFICIAL_SNAPSHOT_TABLE} ADD COLUMN period_total INTEGER")
         if "period_start_at" not in columns:
-            alter_sqls.append("ALTER TABLE snapshot ADD COLUMN period_start_at INTEGER")
+            alter_sqls.append(f"ALTER TABLE {WISH_OFFICIAL_SNAPSHOT_TABLE} ADD COLUMN period_start_at INTEGER")
         if "period_end_at" not in columns:
-            alter_sqls.append("ALTER TABLE snapshot ADD COLUMN period_end_at INTEGER")
+            alter_sqls.append(f"ALTER TABLE {WISH_OFFICIAL_SNAPSHOT_TABLE} ADD COLUMN period_end_at INTEGER")
         for sql in alter_sqls:
             await _wish_conn.execute(sql)
         if alter_sqls:
             await _wish_conn.commit()
         _wish_columns_checked = True
 
+    if not _wish_bootstrap_checked:
+        _wish_bootstrap_checked = True
+        await bootstrap_legacy_wish_snapshot_data(_wish_conn)
+
     return _wish_conn
+
+
+async def query_wish_entries(snapshot_id: int, list_type: str, table_name: str = WISH_OFFICIAL_RANKING_TABLE) -> List[WishRankingEntry]:
+    conn = await get_wish_conn(create=False)
+    if not conn:
+        return []
+
+    cursor = await conn.execute(f"""
+        SELECT id, snapshot_id, list_type, rank, role_id, role_name, pt, server_id
+        FROM {table_name}
+        WHERE snapshot_id = ? AND list_type = ?
+        ORDER BY rank
+    """, (snapshot_id, list_type))
+    rows = await cursor.fetchall()
+    await cursor.close()
+    return [WishRankingEntry.from_row(row) for row in rows]
+
+
+async def load_wish_snapshot_entries(snapshot: WishRankingSnapshot) -> WishRankingSnapshot:
+    snapshot.ladder = await query_wish_entries(snapshot.id, "ladder")
+    snapshot.topN = await query_wish_entries(snapshot.id, "topN")
+    return snapshot
 
 
 def get_wish_role_id(uid: str) -> str:
@@ -290,22 +348,64 @@ def compute_wish_content_hash(activity_id: str, process_id: str, ladder: List[Wi
     return hashlib.sha1(content.encode("utf-8")).hexdigest()
 
 
+def compute_wish_compare_hash(refresh_date: str, content_hash: str) -> str:
+    payload = {
+        "refresh_date": refresh_date,
+        "content_hash": content_hash,
+    }
+    content = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(content.encode("utf-8")).hexdigest()
+
+
+def bind_wish_snapshot_compare(snapshot: WishRankingSnapshot, refresh_date: str) -> WishRankingSnapshot:
+    compare_hash = compute_wish_compare_hash(refresh_date, snapshot.content_hash) if refresh_date else ""
+    return replace(snapshot, refresh_date=refresh_date, compare_hash=compare_hash)
+
+
+def build_wish_snapshot_from_api_data(data: dict, fetched_at: datetime = None) -> WishRankingSnapshot:
+    activity_id = str(data.get("activity_id") or "").strip()
+    process_id = str(data.get("process_id") or "").strip()
+    period_info = WishPeriodInfo.from_api(data.get("period_info") or {})
+    ladder = [WishRankingEntry.from_api("ladder", item) for item in data.get("ladder", []) if item]
+    topN = [WishRankingEntry.from_api("topN", item) for item in data.get("topN", []) if item]
+
+    assert activity_id, "心愿榜数据缺少 activity_id"
+    assert process_id, "心愿榜数据缺少 process_id"
+    assert topN, "心愿榜数据缺少 topN"
+
+    fetched_at = fetched_at or get_wish_now_naive()
+    content_hash = compute_wish_content_hash(activity_id, process_id, ladder, topN)
+    return WishRankingSnapshot(
+        id=0,
+        activity_id=activity_id,
+        process_id=process_id,
+        refresh_date="",
+        fetched_at=fetched_at,
+        total_count=len(topN),
+        content_hash=content_hash,
+        compare_hash="",
+        period_info=period_info,
+        ladder=ladder,
+        topN=topN,
+    )
+
+
 async def query_wish_snapshot_list(activity_id: str = None, limit: int = 1, offset: int = 0) -> List[WishRankingSnapshot]:
     conn = await get_wish_conn(create=False)
     if not conn:
         return []
 
-    sql = """
+    sql = f"""
         SELECT
-            id, activity_id, process_id, fetched_at, total_count, content_hash,
-            period_index, period_total, period_start_at, period_end_at
-        FROM snapshot
+            id, activity_id, process_id, refresh_date, fetched_at, total_count,
+            content_hash, compare_hash, period_index, period_total, period_start_at, period_end_at
+        FROM {WISH_OFFICIAL_SNAPSHOT_TABLE}
     """
     args = []
     if activity_id is not None:
         sql += " WHERE activity_id = ?"
         args.append(activity_id)
-    sql += " ORDER BY fetched_at DESC, id DESC LIMIT ? OFFSET ?"
+    sql += " ORDER BY refresh_date DESC, fetched_at DESC, id DESC LIMIT ? OFFSET ?"
     args.extend([limit, offset])
 
     cursor = await conn.execute(sql, args)
@@ -314,38 +414,16 @@ async def query_wish_snapshot_list(activity_id: str = None, limit: int = 1, offs
     return [WishRankingSnapshot.from_row(row) for row in rows]
 
 
-async def query_wish_entries(snapshot_id: int, list_type: str) -> List[WishRankingEntry]:
-    conn = await get_wish_conn(create=False)
-    if not conn:
-        return []
-
-    cursor = await conn.execute("""
-        SELECT id, snapshot_id, list_type, rank, role_id, role_name, pt, server_id
-        FROM ranking
-        WHERE snapshot_id = ? AND list_type = ?
-        ORDER BY rank
-    """, (snapshot_id, list_type))
-    rows = await cursor.fetchall()
-    await cursor.close()
-    return [WishRankingEntry.from_row(row) for row in rows]
-
-
-async def load_wish_snapshot_entries(snapshot: WishRankingSnapshot) -> WishRankingSnapshot:
-    snapshot.ladder = await query_wish_entries(snapshot.id, "ladder")
-    snapshot.topN = await query_wish_entries(snapshot.id, "topN")
-    return snapshot
-
-
 async def query_wish_snapshot_by_id(snapshot_id: int, load_entries: bool = True) -> Optional[WishRankingSnapshot]:
     conn = await get_wish_conn(create=False)
     if not conn:
         return None
 
-    cursor = await conn.execute("""
+    cursor = await conn.execute(f"""
         SELECT
-            id, activity_id, process_id, fetched_at, total_count, content_hash,
-            period_index, period_total, period_start_at, period_end_at
-        FROM snapshot
+            id, activity_id, process_id, refresh_date, fetched_at, total_count,
+            content_hash, compare_hash, period_index, period_total, period_start_at, period_end_at
+        FROM {WISH_OFFICIAL_SNAPSHOT_TABLE}
         WHERE id = ?
     """, (snapshot_id,))
     row = await cursor.fetchone()
@@ -369,13 +447,99 @@ async def query_latest_wish_snapshot(activity_id: str = None, load_entries: bool
     return snapshot
 
 
-async def query_prev_wish_snapshot(activity_id: str) -> Optional[WishRankingSnapshot]:
-    snapshots = await query_wish_snapshot_list(activity_id=activity_id, limit=2)
-    if len(snapshots) < 2:
+async def query_prev_wish_snapshot(activity_id: str, compare_hash: str) -> Optional[WishRankingSnapshot]:
+    conn = await get_wish_conn(create=False)
+    if not conn:
         return None
-    snapshot = snapshots[1]
+
+    cursor = await conn.execute(f"""
+        SELECT
+            id, activity_id, process_id, refresh_date, fetched_at, total_count,
+            content_hash, compare_hash, period_index, period_total, period_start_at, period_end_at
+        FROM {WISH_OFFICIAL_SNAPSHOT_TABLE}
+        WHERE activity_id = ? AND compare_hash != ?
+        ORDER BY refresh_date DESC, fetched_at DESC, id DESC
+        LIMIT 1
+    """, (activity_id, compare_hash))
+    row = await cursor.fetchone()
+    await cursor.close()
+    if not row:
+        return None
+
+    snapshot = WishRankingSnapshot.from_row(row)
     await load_wish_snapshot_entries(snapshot)
     return snapshot
+
+
+async def table_exists(conn: aiosqlite.Connection, table_name: str) -> bool:
+    cursor = await conn.execute("""
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        LIMIT 1
+    """, (table_name,))
+    row = await cursor.fetchone()
+    await cursor.close()
+    return bool(row)
+
+
+async def count_table_rows(conn: aiosqlite.Connection, table_name: str) -> int:
+    cursor = await conn.execute(f"SELECT COUNT(*) FROM {table_name}")
+    row = await cursor.fetchone()
+    await cursor.close()
+    return int(row[0] or 0)
+
+
+async def bootstrap_legacy_wish_snapshot_data(conn: aiosqlite.Connection):
+    if not await table_exists(conn, WISH_LEGACY_SNAPSHOT_TABLE) or not await table_exists(conn, WISH_LEGACY_RANKING_TABLE):
+        return
+    if await count_table_rows(conn, WISH_OFFICIAL_SNAPSHOT_TABLE) > 0:
+        return
+
+    cursor = await conn.execute(f"""
+        SELECT
+            id, activity_id, process_id, fetched_at, total_count, content_hash,
+            period_index, period_total, period_start_at, period_end_at
+        FROM {WISH_LEGACY_SNAPSHOT_TABLE}
+        ORDER BY fetched_at DESC, id DESC
+    """)
+    rows = await cursor.fetchall()
+    await cursor.close()
+    if not rows:
+        return
+
+    selected_rows = {}
+    for row in rows:
+        refresh_date = get_wish_refresh_date(from_wish_timestamp(row[3]))
+        if refresh_date not in selected_rows:
+            selected_rows[refresh_date] = row
+
+    ordered_rows = sorted(selected_rows.values(), key=lambda row: (row[3], row[0]))
+    for row in ordered_rows:
+        refresh_date = get_wish_refresh_date(from_wish_timestamp(row[3]))
+        snapshot = WishRankingSnapshot(
+            id=0,
+            activity_id=row[1],
+            process_id=row[2],
+            refresh_date=refresh_date,
+            fetched_at=from_wish_timestamp(row[3]),
+            total_count=row[4],
+            content_hash="",
+            compare_hash="",
+            period_info=WishPeriodInfo(
+                period_index=int(row[6] or 0),
+                period_total=int(row[7] or 0),
+                start_at=from_wish_timestamp(row[8]),
+                end_at=from_wish_timestamp(row[9]),
+            ) if row[8] and row[9] else None,
+            ladder=await query_wish_entries(row[0], "ladder", WISH_LEGACY_RANKING_TABLE),
+            topN=await query_wish_entries(row[0], "topN", WISH_LEGACY_RANKING_TABLE),
+        )
+        snapshot.content_hash = compute_wish_content_hash(snapshot.activity_id, snapshot.process_id, snapshot.ladder, snapshot.topN)
+        snapshot.compare_hash = compute_wish_compare_hash(refresh_date, snapshot.content_hash)
+        await save_wish_snapshot_data(snapshot)
+
+    logger.info(f"已迁移国服心愿榜历史快照 {len(ordered_rows)} 条")
 
 
 def find_wish_entry_by_rank(entries: List[WishRankingEntry], rank: int) -> Optional[WishRankingEntry]:
@@ -446,18 +610,6 @@ async def parse_wish_query_params(ctx: SekaiHandlerContext, args: str) -> Tuple[
 """.strip())
 
 
-def get_wish_query_text(qtype: str, qval: Union[str, int, List[int]]) -> str:
-    if qtype == "self":
-        return "你的心愿榜查询结果"
-    if qtype == "uid":
-        return "指定用户的心愿榜查询结果"
-    if qtype == "rank":
-        return f"排名 T{get_board_rank_str(qval)}"
-    if qtype == "ranks":
-        return "多个排名查询结果"
-    return "心愿榜查询结果"
-
-
 def get_remaining_time_text(end_at: Optional[datetime]) -> str:
     if not end_at:
         return "-"
@@ -478,10 +630,6 @@ def format_wish_event_title(event: Optional[dict]) -> str:
     if not event:
         return "-"
     return f"【CN-{event['id']}】{truncate(event['name'], 24)}"
-
-
-def get_wish_rt_text(snapshot: WishRankingSnapshot) -> str:
-    return f"RT: {snapshot.fetched_at.strftime('%Y-%m-%d %H:%M:%S')} ({get_relative_time_text(snapshot.fetched_at)})"
 
 
 def get_wish_update_text(snapshot: WishRankingSnapshot) -> str:
@@ -538,13 +686,9 @@ async def build_wish_header_info(snapshot: WishRankingSnapshot) -> WishHeaderInf
     current_start_at = datetime.fromtimestamp(current_event["startAt"] / 1000) if current_event else None
     current_end_at = datetime.fromtimestamp(current_event["aggregateAt"] / 1000 + 1) if current_event else None
     next_start_at = datetime.fromtimestamp(next_event["startAt"] / 1000) if next_event else None
-    current_title = "当前活动"
-    if current_event:
-        current_title = f"当前活动 【CN-{current_event['id']}】{truncate(current_event['name'], 24)}"
 
     return WishHeaderInfo(
         title=get_wish_period_title(snapshot),
-        current_title=current_title,
         current_event=current_event,
         current_banner=current_banner,
         current_start_at=current_start_at,
@@ -554,78 +698,77 @@ async def build_wish_header_info(snapshot: WishRankingSnapshot) -> WishHeaderInf
         period_remaining_text=get_remaining_time_text(snapshot.period_info.end_at if snapshot.period_info else None),
         remaining_event_count=await count_remaining_events_in_wish_period(ctx, snapshot.period_info),
         t500_score_text=get_board_score_str(t500.pt) if t500 else "-",
-        latest_rt_text=get_wish_rt_text(snapshot),
         next_event=next_event,
         next_start_at=next_start_at,
         next_banner=next_banner,
     )
 
 
-async def save_wish_snapshot_data(data: dict) -> Tuple[WishRankingSnapshot, bool]:
-    activity_id = str(data.get("activity_id") or "").strip()
-    process_id = str(data.get("process_id") or "").strip()
-    period_info = WishPeriodInfo.from_api(data.get("period_info") or {})
-    ladder = [WishRankingEntry.from_api("ladder", item) for item in data.get("ladder", []) if item]
-    topN = [WishRankingEntry.from_api("topN", item) for item in data.get("topN", []) if item]
-
-    assert activity_id, "心愿榜数据缺少 activity_id"
-    assert process_id, "心愿榜数据缺少 process_id"
-    assert topN, "心愿榜数据缺少 topN"
-
-    content_hash = compute_wish_content_hash(activity_id, process_id, ladder, topN)
+async def save_wish_snapshot_data(snapshot: WishRankingSnapshot) -> Tuple[WishRankingSnapshot, bool]:
+    assert snapshot.refresh_date, "心愿榜正式快照缺少 refresh_date"
+    assert snapshot.compare_hash, "心愿榜正式快照缺少 compare_hash"
     conn = await get_wish_conn(create=True)
 
-    cursor = await conn.execute("""
-        SELECT id, content_hash, activity_id
-        FROM snapshot
-        ORDER BY fetched_at DESC, id DESC
+    cursor = await conn.execute(f"""
+        SELECT id
+        FROM {WISH_OFFICIAL_SNAPSHOT_TABLE}
+        WHERE refresh_date = ?
         LIMIT 1
-    """)
-    latest_row = await cursor.fetchone()
+    """, (snapshot.refresh_date,))
+    row = await cursor.fetchone()
     await cursor.close()
-    if latest_row and latest_row[1] == content_hash and latest_row[2] == activity_id:
-        snapshot = await query_wish_snapshot_by_id(latest_row[0], load_entries=True)
-        assert snapshot, "心愿榜快照读取失败"
-        if period_info:
-            await conn.execute("""
-                UPDATE snapshot
-                SET period_index = ?, period_total = ?, period_start_at = ?, period_end_at = ?
-                WHERE id = ?
-            """, (
-                period_info.period_index,
-                period_info.period_total,
-                int(period_info.start_at.timestamp()),
-                int(period_info.end_at.timestamp()),
-                snapshot.id,
-            ))
-            await conn.commit()
-        snapshot.period_info = period_info
-        return snapshot, False
+    fetched_at = int(snapshot.fetched_at.replace(tzinfo=load_wish_location()).timestamp())
+    period_info = snapshot.period_info
 
-    now = get_wish_now()
-    fetched_at = int(now.timestamp())
-    cursor = await conn.execute("""
-        INSERT INTO snapshot (
-            activity_id, process_id, fetched_at, total_count, content_hash,
-            period_index, period_total, period_start_at, period_end_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        activity_id,
-        process_id,
-        fetched_at,
-        len(topN),
-        content_hash,
-        period_info.period_index if period_info else None,
-        period_info.period_total if period_info else None,
-        int(period_info.start_at.timestamp()) if period_info else None,
-        int(period_info.end_at.timestamp()) if period_info else None,
-    ))
-    snapshot_id = cursor.lastrowid
-    await cursor.close()
+    if row:
+        snapshot_id = row[0]
+        await conn.execute(f"""
+            UPDATE {WISH_OFFICIAL_SNAPSHOT_TABLE}
+            SET activity_id = ?, process_id = ?, fetched_at = ?, total_count = ?,
+                content_hash = ?, compare_hash = ?, period_index = ?, period_total = ?,
+                period_start_at = ?, period_end_at = ?
+            WHERE id = ?
+        """, (
+            snapshot.activity_id,
+            snapshot.process_id,
+            fetched_at,
+            snapshot.total_count,
+            snapshot.content_hash,
+            snapshot.compare_hash,
+            period_info.period_index if period_info else None,
+            period_info.period_total if period_info else None,
+            int(period_info.start_at.timestamp()) if period_info else None,
+            int(period_info.end_at.timestamp()) if period_info else None,
+            snapshot_id,
+        ))
+        await conn.execute(f"DELETE FROM {WISH_OFFICIAL_RANKING_TABLE} WHERE snapshot_id = ?", (snapshot_id,))
+        created = False
+    else:
+        cursor = await conn.execute(f"""
+            INSERT INTO {WISH_OFFICIAL_SNAPSHOT_TABLE} (
+                activity_id, process_id, refresh_date, fetched_at, total_count, content_hash,
+                compare_hash, period_index, period_total, period_start_at, period_end_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            snapshot.activity_id,
+            snapshot.process_id,
+            snapshot.refresh_date,
+            fetched_at,
+            snapshot.total_count,
+            snapshot.content_hash,
+            snapshot.compare_hash,
+            period_info.period_index if period_info else None,
+            period_info.period_total if period_info else None,
+            int(period_info.start_at.timestamp()) if period_info else None,
+            int(period_info.end_at.timestamp()) if period_info else None,
+        ))
+        snapshot_id = cursor.lastrowid
+        await cursor.close()
+        created = True
 
     params = []
-    for entry in ladder + topN:
+    for entry in snapshot.ladder + snapshot.topN:
         entry.snapshot_id = snapshot_id
         params.append((
             snapshot_id,
@@ -636,24 +779,14 @@ async def save_wish_snapshot_data(data: dict) -> Tuple[WishRankingSnapshot, bool
             entry.pt,
             entry.server_id,
         ))
-    await conn.executemany("""
-        INSERT INTO ranking (snapshot_id, list_type, rank, role_id, role_name, pt, server_id)
+    await conn.executemany(f"""
+        INSERT INTO {WISH_OFFICIAL_RANKING_TABLE} (snapshot_id, list_type, rank, role_id, role_name, pt, server_id)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, params)
     await conn.commit()
 
-    logger.info(f"已保存国服心愿榜快照 activity_id={activity_id} topN={len(topN)}")
-    return WishRankingSnapshot(
-        id=snapshot_id,
-        activity_id=activity_id,
-        process_id=process_id,
-        fetched_at=from_wish_timestamp(fetched_at),
-        total_count=len(topN),
-        content_hash=content_hash,
-        period_info=period_info,
-        ladder=ladder,
-        topN=topN,
-    ), True
+    logger.info(f"已保存国服心愿榜正式快照 refresh_date={snapshot.refresh_date} activity_id={snapshot.activity_id} topN={snapshot.total_count}")
+    return replace(snapshot, id=snapshot_id), created
 
 
 async def fetch_wish_ranking_data(ctx: SekaiHandlerContext) -> dict:
@@ -667,22 +800,79 @@ async def fetch_wish_ranking_data(ctx: SekaiHandlerContext) -> dict:
     return data
 
 
-async def sync_wish_snapshot() -> Tuple[WishRankingSnapshot, bool]:
-    async with _wish_sync_lock:
+async def fetch_latest_wish_live_snapshot(force_refresh: bool = False) -> WishRankingSnapshot:
+    global _wish_live_cache
+
+    now = get_wish_now_naive()
+    async with _wish_live_fetch_lock:
+        if not force_refresh and _wish_live_cache and now < _wish_live_cache.expire_at:
+            return _wish_live_cache.snapshot
+
         ctx = SekaiHandlerContext.from_region(CN_WISH_REGION)
         data = await fetch_wish_ranking_data(ctx)
-        return await save_wish_snapshot_data(data)
+        snapshot = build_wish_snapshot_from_api_data(data, fetched_at=now)
+        _wish_live_cache = WishLiveCache(
+            snapshot=snapshot,
+            expire_at=now + timedelta(seconds=WISH_QUERY_CACHE_SECONDS),
+        )
+        return snapshot
+
+
+def count_wish_refresh_probe(snapshot: WishRankingSnapshot) -> int:
+    global _wish_refresh_probe_key, _wish_refresh_probe_count
+    key = (snapshot.refresh_date, snapshot.activity_id, snapshot.content_hash)
+    if _wish_refresh_probe_key == key:
+        _wish_refresh_probe_count += 1
+    else:
+        _wish_refresh_probe_key = key
+        _wish_refresh_probe_count = 1
+    return _wish_refresh_probe_count
+
+
+def reset_wish_refresh_probe():
+    global _wish_refresh_probe_key, _wish_refresh_probe_count
+    _wish_refresh_probe_key = None
+    _wish_refresh_probe_count = 0
+
+
+async def sync_wish_snapshot() -> Tuple[WishRankingSnapshot, bool]:
+    latest_snapshot = await query_latest_wish_snapshot(load_entries=False)
+    refresh_date = get_wish_refresh_date()
+    current_snapshot = bind_wish_snapshot_compare(
+        await fetch_latest_wish_live_snapshot(force_refresh=True),
+        refresh_date,
+    )
+
+    if (
+        latest_snapshot
+        and latest_snapshot.refresh_date != refresh_date
+        and latest_snapshot.activity_id == current_snapshot.activity_id
+        and latest_snapshot.content_hash == current_snapshot.content_hash
+    ):
+        stable_count = count_wish_refresh_probe(current_snapshot)
+        if stable_count < WISH_REFRESH_STABLE_COUNT:
+            return current_snapshot, False
+
+    snapshot, created = await save_wish_snapshot_data(current_snapshot)
+    reset_wish_refresh_probe()
+    return snapshot, created
 
 
 async def get_latest_wish_snapshot_for_query() -> WishRankingSnapshot:
+    official_snapshot = await query_latest_wish_snapshot(load_entries=False)
+    refresh_date = official_snapshot.refresh_date if official_snapshot else get_wish_refresh_date()
     try:
-        snapshot, _ = await sync_wish_snapshot()
-        return snapshot
+        live_snapshot = await fetch_latest_wish_live_snapshot()
+        return bind_wish_snapshot_compare(live_snapshot, refresh_date)
     except Exception as e:
-        logger.warning(f"同步国服心愿榜失败，尝试使用本地缓存: {e}")
+        logger.warning(f"获取国服心愿榜实时数据失败，尝试使用本地正式快照: {e}")
 
-    snapshot = await query_latest_wish_snapshot(load_entries=True)
+    snapshot = official_snapshot
+    if not snapshot:
+        snapshot = await query_latest_wish_snapshot(load_entries=True)
     assert_and_reply(snapshot, "暂无国服心愿榜数据")
+    if not snapshot.topN:
+        await load_wish_snapshot_entries(snapshot)
     return snapshot
 
 
@@ -693,11 +883,7 @@ def need_daily_wish_refresh(snapshot: Optional[WishRankingSnapshot], now: dateti
         return False
     if snapshot is None:
         return True
-    return snapshot.fetched_at < refresh_time
-
-
-def build_wish_metric_box(text: str, style: TextStyle, width: int):
-    return TextBox(text, style, overflow="clip").set_size((width, 40)).set_padding((14, 0)).set_bg(roundrect_bg(fill=(255, 255, 255, 210)))
+    return snapshot.refresh_date != get_wish_refresh_date(now)
 
 
 def render_wish_period_title(snapshot: WishRankingSnapshot, width: int = 818):
@@ -806,7 +992,6 @@ def render_wish_single_query_card(
     snapshot: WishRankingSnapshot,
     prev_snapshot: Optional[WishRankingSnapshot],
     entry: WishRankingEntry,
-    query_text: str,
     by_role: bool,
 ):
     stats = build_wish_entry_stats(snapshot, prev_snapshot, entry, by_role)
@@ -828,7 +1013,6 @@ def render_wish_table(
     snapshot: WishRankingSnapshot,
     prev_snapshot: Optional[WishRankingSnapshot],
     entries: List[WishRankingEntry],
-    title: str,
     by_role: bool,
     include_name: bool,
 ):
@@ -895,7 +1079,6 @@ async def compose_wishsk_image(
     snapshot: WishRankingSnapshot,
     prev_snapshot: Optional[WishRankingSnapshot],
     entries: List[WishRankingEntry],
-    query_text: str,
     by_role: bool,
 ) -> Image.Image:
     header = await build_wish_header_info(snapshot)
@@ -904,10 +1087,10 @@ async def compose_wishsk_image(
         with VSplit().set_content_align("lt").set_item_align("lt").set_sep(12):
             if by_role and len(entries) == 1:
                 render_wish_period_title(snapshot, width=580)
-                render_wish_single_query_card(snapshot, prev_snapshot, entries[0], query_text, by_role)
+                render_wish_single_query_card(snapshot, prev_snapshot, entries[0], by_role)
             else:
                 render_wish_overview_header(snapshot, header)
-                render_wish_table(snapshot, prev_snapshot, entries, query_text, by_role, include_name=True)
+                render_wish_table(snapshot, prev_snapshot, entries, by_role, include_name=True)
 
     add_watermark(canvas)
     return await canvas.get_img()
@@ -944,7 +1127,7 @@ async def _(ctx: SekaiHandlerContext):
     qtype, qval = await parse_wish_query_params(ctx, args)
 
     snapshot = await get_latest_wish_snapshot_for_query()
-    prev_snapshot = await query_prev_wish_snapshot(snapshot.activity_id)
+    prev_snapshot = await query_prev_wish_snapshot(snapshot.activity_id, snapshot.compare_hash)
 
     entries: List[WishRankingEntry] = []
     if qtype in ("self", "uid"):
@@ -975,7 +1158,6 @@ async def _(ctx: SekaiHandlerContext):
             snapshot,
             prev_snapshot,
             entries,
-            get_wish_query_text(qtype, qval),
             by_role=qtype in ("self", "uid"),
         ),
         low_quality=True,
@@ -992,7 +1174,7 @@ async def _(ctx: SekaiHandlerContext):
     assert_and_reply(not args, f"使用方式: {ctx.original_trigger_cmd}")
 
     snapshot = await get_latest_wish_snapshot_for_query()
-    prev_snapshot = await query_prev_wish_snapshot(snapshot.activity_id)
+    prev_snapshot = await query_prev_wish_snapshot(snapshot.activity_id, snapshot.compare_hash)
     return await ctx.asend_msg(await get_image_cq(
         await compose_wishskl_image(snapshot, prev_snapshot),
         low_quality=True,

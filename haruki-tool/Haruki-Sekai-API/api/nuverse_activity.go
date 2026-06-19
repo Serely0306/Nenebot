@@ -91,11 +91,10 @@ func getCNWishRankingTopLadder(c fiber.Ctx) error {
 
 	activityID := c.Query("activity_id")
 	var newsItems []cnWishRankingNewsItem
+	newsCtx, cancel := context.WithTimeout(c.RequestCtx(), 20*time.Second)
+	defer cancel()
+	newsItems, err = fetchCNWishRankingNewsItems(newsCtx, mgr.Proxy)
 	if activityID == "" {
-		ctx, cancel := context.WithTimeout(c.RequestCtx(), 20*time.Second)
-		defer cancel()
-
-		newsItems, err = fetchCNWishRankingNewsItems(ctx, mgr.Proxy)
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadGateway, fmt.Sprintf("fetch wish ranking news failed: %v", err))
 		}
@@ -103,14 +102,8 @@ func getCNWishRankingTopLadder(c fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadGateway, fmt.Sprintf("resolve activity_id failed: %v", err))
 		}
-	} else {
-		ctx, cancel := context.WithTimeout(c.RequestCtx(), 20*time.Second)
-		defer cancel()
-
-		newsItems, err = fetchCNWishRankingNewsItems(ctx, mgr.Proxy)
-		if err != nil {
-			newsItems = nil
-		}
+	} else if err != nil {
+		newsItems = nil
 	}
 
 	ctx, cancel := context.WithTimeout(c.RequestCtx(), 20*time.Second)
@@ -218,14 +211,6 @@ func buildCNWishRankingResult(activityID string, pages []cnWishRankingExecRespon
 		"ladder":      ladder,
 		"topN":        topN,
 	}, nil
-}
-
-func fetchCNWishRankingActivityID(ctx context.Context, proxy string) (string, error) {
-	items, err := fetchCNWishRankingNewsItems(ctx, proxy)
-	if err != nil {
-		return "", err
-	}
-	return pickCNWishRankingActivityID(items, time.Now().In(loadCNWishRankingLocation()))
 }
 
 func fetchCNWishRankingNewsItems(ctx context.Context, proxy string) ([]cnWishRankingNewsItem, error) {
