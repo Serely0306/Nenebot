@@ -53,6 +53,7 @@ type MitmProxy struct {
 	debug    bool
 	certPath string
 	keyPath  string
+	mitmTLS  func(host string, ctx *goproxy.ProxyCtx) (*tls.Config, error)
 }
 
 // NewMitmProxy 创建 MITM 代理
@@ -198,9 +199,7 @@ func (p *MitmProxy) loadCA() error {
 	}
 
 	goproxy.GoproxyCa = cert
-	goproxy.OkConnect = &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: goproxy.TLSConfigFromCA(&cert)}
-	goproxy.MitmConnect = &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: goproxy.TLSConfigFromCA(&cert)}
-	goproxy.RejectConnect = &goproxy.ConnectAction{Action: goproxy.ConnectReject, TLSConfig: goproxy.TLSConfigFromCA(&cert)}
+	p.mitmTLS = goproxy.TLSConfigFromCA(&cert)
 
 	log.Printf("[CA] 已加载 CA 证书: %s (有效期至 %s)\n", x509Cert.Subject.CommonName, x509Cert.NotAfter.Format("2006-01-02"))
 
@@ -222,15 +221,22 @@ func buildTargetHostMatcher() func(host string, ctx *goproxy.ProxyCtx) bool {
 
 // setupHTTPSIntercept 设置 HTTPS 拦截
 func (p *MitmProxy) setupHTTPSIntercept() {
+	mitmHandler := goproxy.FuncHttpsHandler(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
+		return &goproxy.ConnectAction{
+			Action:    goproxy.ConnectMitm,
+			TLSConfig: p.mitmTLS,
+		}, host
+	})
+
 	if p.config.MitmTargetOnly {
 		// 仅对游戏 API 域名执行 MITM，其他 HTTPS 流量直接透传
 		p.proxy.OnRequest(goproxy.ReqConditionFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) bool {
 			return buildTargetHostMatcher()(req.Host, ctx)
-		})).HandleConnect(goproxy.AlwaysMitm)
+		})).HandleConnect(mitmHandler)
 		log.Println("[代理] MITM 模式: 仅目标域名")
 	} else {
 		// 拦截所有 HTTPS 连接
-		p.proxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
+		p.proxy.OnRequest().HandleConnect(mitmHandler)
 		log.Println("[代理] MITM 模式: 全部流量")
 	}
 }
