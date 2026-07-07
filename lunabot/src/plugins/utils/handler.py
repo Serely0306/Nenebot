@@ -1,10 +1,11 @@
 from .utils import *
 from .blacklist import HARDCODING_BLACKLIST_USERS
-from nonebot import on_command
+from nonebot import on_command, on_message
 from nonebot import get_bot as nb_get_bot
 from nonebot import get_bots as nb_get_bots
-from nonebot.rule import to_me as rule_to_me
+from nonebot.rule import Rule, to_me as rule_to_me
 from nonebot.message import handle_event
+from nonebot.exception import StopPropagation
 from nonebot.compat import model_dump, type_validate_python
 from nonebot.adapters.onebot.v11 import (
     Bot, 
@@ -18,8 +19,10 @@ from nonebot.adapters.onebot.v11.event import Sender, Reply
 from nonebot.adapters.onebot.v11.message import MessageSegment, Message
 import nonebot.adapters.onebot.v11.bot as bot_module
 from argparse import ArgumentParser
+from collections import defaultdict
 import requests
 import inspect
+from pygtrie import CharTrie
 
 
 SUPERUSER_CFG = global_config.item('superuser')
@@ -28,6 +31,13 @@ ALLOW_CODE_EXEC_CFG = global_config.item('allow_code_exec')
 DEFAULT_LQ_IMAGE_QUALITY_CFG = global_config.item('msg_send.low_quality_image.default_quality')
 DEFAULT_LQ_IMAGE_SUBSAMPLING_CFG = global_config.item('msg_send.low_quality_image.default_subsampling')
 DEFAULT_LQ_IMAGE_OPTIMIZE_CFG = global_config.item('msg_send.low_quality_image.default_optimize')
+
+
+async def _shared_slash_event_rule(event: MessageEvent) -> bool:
+    try:
+        return event.get_plaintext().lstrip().startswith("/")
+    except Exception:
+        return False
 
 
 def get_all_bots() -> list[Bot]:
@@ -2243,6 +2253,13 @@ class HelpDoc:
     parts: List[HelpDocCmdPart] = field(default_factory=list)
 
 
+@dataclass
+class SharedSlashRouteBucket:
+    matcher: Any = None
+    trie: CharTrie = field(default_factory=CharTrie)
+    handlers_by_cmd: Dict[str, List["CmdHandler"]] = field(default_factory=lambda: defaultdict(list))
+
+
 SEG_COMMAND_SEPS = ['', ' ', '_']
 
 class SegCmd:
@@ -2273,6 +2290,8 @@ class CmdHandler:
     命令处理器，封装了指令的注册和处理逻辑
     """
     cmd_handlers: list["CmdHandler"] = []
+    shared_slash_buckets: Dict[tuple[int, bool], SharedSlashRouteBucket] = {}
+    shared_slash_cmd_handlers: Dict[str, List["CmdHandler"]] = defaultdict(list)
     HELP_PART_IMG_CACHE_DIR = "data/utils/help_part_img_cache/"
     help_docs: Dict[str, HelpDoc] = {}
 
@@ -2312,9 +2331,6 @@ class CmdHandler:
         self.logger = logger
         self.error_reply = error_reply
         self.check_group_enabled = check_group_enabled
-        handler_kwargs = {}
-        if only_to_me: handler_kwargs["rule"] = rule_to_me()
-        self.handler = on_command(self.commands[0], priority=priority, block=block, aliases=set(self.commands[1:]), **handler_kwargs)
         self.superuser_check = None
         self.private_group_check = None
         self.wblist_checks = []
@@ -2332,12 +2348,96 @@ class CmdHandler:
         self.help_trigger_condition = help_trigger_condition
 
         self.priority = priority
+        self.block = block
         self.only_to_me = only_to_me
         self.handler_func = None
+        self.use_shared_matcher = self._should_use_shared_matcher()
+
+        if self.use_shared_matcher:
+            self.handler = self._register_shared_slash_handler()
+        else:
+            handler_kwargs = {}
+            if only_to_me:
+                handler_kwargs["rule"] = rule_to_me()
+            self.handler = on_command(
+                self.commands[0],
+                priority=priority,
+                block=block,
+                aliases=set(self.commands[1:]),
+                **handler_kwargs,
+            )
 
         CmdHandler.cmd_handlers.append(self)
         CmdHandler.cmd_handlers.sort(key=lambda x: x.priority, reverse=True)
         # utils_logger.info(f'注册指令 {commands[0]}')
+
+    def _should_use_shared_matcher(self) -> bool:
+        return bool(self.commands) and all(cmd and cmd.startswith("/") for cmd in self.commands)
+
+    @classmethod
+    def _get_shared_slash_bucket_key(cls, priority: int, only_to_me: bool) -> tuple[int, bool]:
+        return (priority, only_to_me)
+
+    @classmethod
+    def _get_shared_slash_bucket(cls, priority: int, only_to_me: bool) -> SharedSlashRouteBucket:
+        key = cls._get_shared_slash_bucket_key(priority, only_to_me)
+        if key in cls.shared_slash_buckets:
+            return cls.shared_slash_buckets[key]
+
+        route_rule = Rule(_shared_slash_event_rule)
+        if only_to_me:
+            route_rule = route_rule & rule_to_me()
+        matcher = on_message(route_rule, priority=priority, block=False)
+        bucket = SharedSlashRouteBucket(matcher=matcher)
+        cls.shared_slash_buckets[key] = bucket
+
+        @matcher.handle()
+        async def _shared_slash_dispatch(bot: Bot, event: MessageEvent, _bucket_key=key, _matcher=matcher):
+            route = cls._match_shared_slash_handler(_bucket_key, event.message.extract_plain_text())
+            if not route:
+                return
+
+            matched_cmd, handlers = route
+            for handler in handlers:
+                await handler._execute_handler(bot, event, _matcher, matched_cmd=matched_cmd)
+
+            if any(handler.block for handler in handlers):
+                raise StopPropagation
+
+        return bucket
+
+    @classmethod
+    def _match_shared_slash_handler(
+        cls,
+        bucket_key: tuple[int, bool],
+        plain_text: str,
+    ) -> Optional[tuple[str, List["CmdHandler"]]]:
+        bucket = cls.shared_slash_buckets.get(bucket_key)
+        if not bucket:
+            return None
+
+        stripped_text = plain_text.lstrip()
+        matched = bucket.trie.longest_prefix(stripped_text)
+        if not matched:
+            return None
+
+        handlers = bucket.handlers_by_cmd.get(matched.key, [])
+        if not handlers:
+            return None
+        return matched.key, handlers
+
+    def _register_shared_slash_handler(self):
+        bucket = self._get_shared_slash_bucket(self.priority, self.only_to_me)
+        for cmd in self.commands:
+            existed_handlers = CmdHandler.shared_slash_cmd_handlers[cmd]
+            if existed_handlers:
+                utils_logger.warning(f'发现重复指令 "{cmd}"，共享slash路由将按注册顺序依次执行')
+            existed_handlers.append(self)
+
+            if cmd not in bucket.trie:
+                bucket.trie[cmd] = cmd
+            bucket.handlers_by_cmd[cmd].append(self)
+        return bucket.matcher
 
     def check_group(self):
         self.private_group_check = "group"
@@ -2446,139 +2546,162 @@ class CmdHandler:
     async def additional_context_process(self, context: HandlerContext):
         return context
 
+    def _resolve_trigger_cmd(self, plain_text: str, matched_cmd: Optional[str] = None) -> tuple[str, str]:
+        if matched_cmd is not None:
+            start = plain_text.find(matched_cmd)
+            if start == -1:
+                stripped_text = plain_text.lstrip()
+                start = len(plain_text) - len(stripped_text)
+            return matched_cmd, plain_text[start + len(matched_cmd):]
+
+        cmd_starts = []
+        for cmd in sorted(self.commands, key=len, reverse=True):
+            start = plain_text.find(cmd)
+            cmd_starts.append((cmd, start if start != -1 else float('inf')))
+        cmd_starts.sort(key=lambda x: x[1])
+        trigger_cmd = cmd_starts[0][0]
+        arg_text = plain_text[cmd_starts[0][1] + len(trigger_cmd):]
+        return trigger_cmd, arg_text
+
+    async def _execute_handler(
+        self,
+        bot: Bot,
+        event: MessageEvent,
+        nonebot_handler: Any,
+        matched_cmd: Optional[str] = None,
+    ):
+        if self.disabled:
+            return
+
+        # 安全模式
+        if on_safe_mode() and not check_superuser(event):
+            return
+
+        with ProfileTimer("handler.check_privilege"):
+            # 禁止私聊自己的指令生效
+            # 禁止私聊自己的指令生效（需要超管权限的指令除外）
+            if not is_group_msg(event) and event.user_id == event.self_id:
+                self.logger.warning(f'取消私聊自己的指令处理')
+                return
+
+            # 禁止bot回复自己的消息重复触发
+            if not self.allow_bot_reply_msg and event.message_id in _bot_reply_msg_ids:
+                return
+
+            # 检测群聊是否启用
+            if self.check_group_enabled and is_group_msg(event) and check_group_disabled(event.group_id):
+                # self.logger.warning(f'取消未启用群聊 {event.group_id} 的指令处理')
+                return
+
+            # 检测黑名单
+            if check_in_blacklist(event.user_id):
+                self.logger.warning(f'取消黑名单用户 {event.user_id} 的指令处理')
+                return
+
+            # 权限检查
+            if self.private_group_check == "group" and not is_group_msg(event):
+                return
+            if self.private_group_check == "private" and is_group_msg(event):
+                return
+            if self.superuser_check and not check_superuser(event, **self.superuser_check):
+                return
+            for wblist, kwargs in self.wblist_checks:
+                if not wblist.check(event, **kwargs):
+                    return
+
+            # 每日上限检查
+            if not check_send_msg_daily_limit(int(bot.self_id)) and not check_superuser(event, **self.superuser_check):
+                return
+
+            # cd检查
+            for cdrate, kwargs in self.cdrate_checks:
+                if not (await cdrate.check(event, **kwargs)):
+                    return
+
+        with ProfileTimer("handler.construct_context"):
+            # 上下文构造
+            context = HandlerContext()
+            context.time = datetime.now()
+            context.handler = self
+            context.nonebot_handler = nonebot_handler
+            context.bot = bot
+            context.event = event
+            context.logger = self.logger
+
+            plain_text = event.message.extract_plain_text()
+            context.trigger_cmd, context.arg_text = self._resolve_trigger_cmd(plain_text, matched_cmd)
+
+            if any([banned_cmd in context.trigger_cmd for banned_cmd in self.banned_cmds]):
+                return
+
+            context.message_id = event.message_id
+            context.user_id = event.user_id
+            if is_group_msg(event):
+                context.group_id = event.group_id
+
+            # 记录到历史
+            global _cmd_history, MAX_CMD_HISTORY
+            if context.trigger_cmd:
+                _cmd_history.append(context)
+                if len(_cmd_history) > MAX_CMD_HISTORY:
+                    _cmd_history = _cmd_history[-MAX_CMD_HISTORY:]
+
+        try:
+            with ProfileTimer("handler.additional_context_process"):
+                # 额外处理，用于子类自定义
+                context = await self.additional_context_process(context)
+                assert context, "额外处理返回值不能为空"
+
+            # 帮助文档
+            if not self.disable_help:
+                for help_keyword in ('help', '帮助'):
+                    ok = False
+                    if isinstance(self.help_trigger_condition, str):
+                        match self.help_trigger_condition:
+                            case 'contain':
+                                ok = help_keyword in context.arg_text
+                            case 'exact':
+                                ok = context.arg_text.strip() == help_keyword
+                    else:
+                        ok = self.help_trigger_condition(context.arg_text)
+                    if ok:
+                        cmds = self.commands if not self.help_command else [self.help_command]
+                        for cmd in cmds:
+                            part = self.find_cmd_help_doc(cmd)
+                            if part:
+                                img = await self.get_cmd_help_doc_img(part)
+                                return await context.asend_reply_msg(await get_image_cq(img, low_quality=True))
+                        raise ReplyException(f"没有找到该指令的帮助\n发送\"/help\"查看完整帮助")
+
+            # 执行函数
+            return await self.handler_func(context)
+
+        except NoReplyException:
+            return
+        except ReplyException as e:
+            return await context.asend_reply_msg(str(e))
+        except Exception as e:
+            exc_desc = get_exc_desc(e)
+            self.logger.print_exc(f'指令\"{context.trigger_cmd}\"处理失败')
+            if self.error_reply:
+                if not ('ActionFailed' in exc_desc and 'Timeout' in exc_desc):
+                    await context.asend_reply_msg(truncate(f"指令处理失败: {exc_desc}", 256))
+        finally:
+            for block_id in context.block_ids:
+                self.block_set.discard(block_id)
+
     def handle(self):
         def decorator(handler_func):
+            self.handler_func = handler_func
+
+            if self.use_shared_matcher:
+                return handler_func
+
             @self.handler.handle()
             async def func(bot: Bot, event: MessageEvent):
                 # utils_logger.info(f'Handler {self.commands[0]} 收到指令: {event.message.extract_plain_text()}')
+                return await self._execute_handler(bot, event, self.handler)
 
-                if self.disabled:
-                    return
-
-                # 安全模式
-                if on_safe_mode() and not check_superuser(event):
-                    return
-                
-                with ProfileTimer("handler.check_privilege"):
-                    # 禁止私聊自己的指令生效
-                    # 禁止私聊自己的指令生效（需要超管权限的指令除外）
-                    if not is_group_msg(event) and event.user_id == event.self_id:
-                        self.logger.warning(f'取消私聊自己的指令处理')
-                        return
-                    
-                    # 禁止bot回复自己的消息重复触发
-                    if not self.allow_bot_reply_msg and event.message_id in _bot_reply_msg_ids:
-                        return
-                    
-                    # 检测群聊是否启用
-                    if self.check_group_enabled and is_group_msg(event) and check_group_disabled(event.group_id):
-                        # self.logger.warning(f'取消未启用群聊 {event.group_id} 的指令处理')
-                        return
-
-                    # 检测黑名单
-                    if check_in_blacklist(event.user_id):
-                        self.logger.warning(f'取消黑名单用户 {event.user_id} 的指令处理')
-                        return
-
-                    # 权限检查
-                    if self.private_group_check == "group" and not is_group_msg(event):
-                        return
-                    if self.private_group_check == "private" and is_group_msg(event):
-                        return
-                    if self.superuser_check and not check_superuser(event, **self.superuser_check):
-                        return
-                    for wblist, kwargs in self.wblist_checks:
-                        if not wblist.check(event, **kwargs):
-                            return
-
-                    # 每日上限检查
-                    if not check_send_msg_daily_limit(int(bot.self_id)) and not check_superuser(event, **self.superuser_check):
-                        return
-
-                    # cd检查
-                    for cdrate, kwargs in self.cdrate_checks:
-                        if not (await cdrate.check(event, **kwargs)):
-                            return
-
-                with ProfileTimer("handler.construct_context"):
-                    # 上下文构造
-                    context = HandlerContext()
-                    context.time = datetime.now()
-                    context.handler = self
-                    context.nonebot_handler = self.handler
-                    context.bot = bot
-                    context.event = event
-                    context.logger = self.logger
-
-                    plain_text = event.message.extract_plain_text()
-                    cmd_starts = []
-                    for cmd in sorted(self.commands, key=len, reverse=True):
-                        start = plain_text.find(cmd)
-                        cmd_starts.append((cmd, start if start != -1 else float('inf')))
-                    cmd_starts.sort(key=lambda x: x[1])
-                    context.trigger_cmd = cmd_starts[0][0]
-                    context.arg_text = plain_text[cmd_starts[0][1] + len(context.trigger_cmd):]
-
-                    if any([banned_cmd in context.trigger_cmd for banned_cmd in self.banned_cmds]):
-                        return
-
-                    context.message_id = event.message_id
-                    context.user_id = event.user_id
-                    if is_group_msg(event):
-                        context.group_id = event.group_id
-
-                    # 记录到历史
-                    global _cmd_history, MAX_CMD_HISTORY
-                    if context.trigger_cmd:
-                        _cmd_history.append(context)
-                        if len(_cmd_history) > MAX_CMD_HISTORY:
-                            _cmd_history = _cmd_history[-MAX_CMD_HISTORY:]
-
-                try:
-                    with ProfileTimer("handler.additional_context_process"):
-                        # 额外处理，用于子类自定义
-                        context = await self.additional_context_process(context)
-                        assert context, "额外处理返回值不能为空"
-
-                    # 帮助文档
-                    if not self.disable_help:
-                        for help_keyword in ('help', '帮助'):
-                            ok = False
-                            if isinstance(self.help_trigger_condition, str):
-                                match self.help_trigger_condition:
-                                    case 'contain':
-                                        ok = help_keyword in context.arg_text
-                                    case 'exact':
-                                        ok = context.arg_text.strip() == help_keyword
-                            else:
-                                ok = self.help_trigger_condition(context.arg_text)
-                            if ok:
-                                cmds = self.commands if not self.help_command else [self.help_command]
-                                for cmd in cmds:
-                                    part = self.find_cmd_help_doc(cmd)
-                                    if part:
-                                        img = await self.get_cmd_help_doc_img(part)
-                                        return await context.asend_reply_msg(await get_image_cq(img, low_quality=True))
-                                raise ReplyException(f"没有找到该指令的帮助\n发送\"/help\"查看完整帮助")
-
-                    # 执行函数
-                    return await handler_func(context)
-                
-                except NoReplyException:
-                    return
-                except ReplyException as e:
-                    return await context.asend_reply_msg(str(e))
-                except Exception as e:
-                    exc_desc = get_exc_desc(e)
-                    self.logger.print_exc(f'指令\"{context.trigger_cmd}\"处理失败')
-                    if self.error_reply:
-                        if not ('ActionFailed' in exc_desc and 'Timeout' in exc_desc):
-                            await context.asend_reply_msg(truncate(f"指令处理失败: {exc_desc}", 256))
-                finally:
-                    for block_id in context.block_ids:
-                        self.block_set.discard(block_id)
-
-            self.handler_func = func 
             return func
         return decorator
   
