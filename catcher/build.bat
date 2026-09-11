@@ -37,13 +37,13 @@ echo 3. 交叉编译 Android ARM64 版本...
 set GOOS=android
 set GOARCH=arm64
 set CGO_ENABLED=0
-go build -ldflags="-s -w" -o LunaBotCatcher-android-arm64 ./cmd/catcher
+go build -ldflags="-s -w" -o Catcher-android-arm64 ./cmd/catcher
 if %ERRORLEVEL% neq 0 (
     echo 编译 Android 版本失败!
     pause
     exit /b 1
 )
-echo    - LunaBotCatcher-android-arm64
+echo    - Catcher-android-arm64
 
 echo.
 echo 4. 交叉编译 Linux AMD64 版本...
@@ -62,9 +62,9 @@ echo  编译完成!
 echo ========================================
 echo.
 echo Android 使用方法:
-echo   adb push LunaBotCatcher-android-arm64 /data/local/tmp/lunabot-catcher/
+echo   adb push Catcher-android-arm64 /data/local/tmp/lunabot-catcher/
 echo   adb push config.yaml /data/local/tmp/lunabot-catcher/
-echo   adb shell chmod 755 /data/local/tmp/lunabot-catcher/LunaBotCatcher-android-arm64
+echo   adb shell chmod 755 /data/local/tmp/lunabot-catcher/Catcher-android-arm64
 echo.
 
 pause
