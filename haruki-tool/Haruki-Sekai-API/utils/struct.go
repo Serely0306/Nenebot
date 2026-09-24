@@ -67,6 +67,7 @@ type HarukiAssetUpdaterInfo struct {
 }
 
 type HarukiSekaiLoginResponse struct {
+	UserID               any      `msgpack:"userId"`
 	SessionToken         string   `msgpack:"sessionToken"`
 	DataVersion          string   `msgpack:"dataVersion"`
 	AssetVersion         string   `msgpack:"assetVersion"`

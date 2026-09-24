@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 func (c *SekaiClient) prepareLoginRequest() (string, string) {
@@ -21,11 +22,31 @@ func (c *SekaiClient) prepareLoginRequest() (string, string) {
 	return loginURL, "POST"
 }
 
-func validateLoginResponse(retData *utils.HarukiSekaiLoginResponse) error {
-	if retData.SessionToken == "" || retData.DataVersion == "" || retData.AssetVersion == "" {
-		return fmt.Errorf("invalid login response: missing required fields")
+func (c *SekaiClient) validateLoginResponse(retData *utils.HarukiSekaiLoginResponse) error {
+	missing := make([]string, 0, 3)
+	if retData.SessionToken == "" {
+		missing = append(missing, "sessionToken")
+	}
+	// CN now returns only sessionToken and userId. Versions come from the version file.
+	if c.Server != utils.HarukiSekaiServerRegionCN {
+		if retData.DataVersion == "" {
+			missing = append(missing, "dataVersion")
+		}
+		if retData.AssetVersion == "" {
+			missing = append(missing, "assetVersion")
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("invalid login response: missing required fields: %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+func (c *SekaiClient) dumpLoginRequest() ([]byte, error) {
+	if c.Server == utils.HarukiSekaiServerRegionCN {
+		return msgpack.Marshal(map[string]any{"accessToken": c.Account.GetToken()})
+	}
+	return c.Account.Dump()
 }
 
 func extractUserID(userID any) (string, error) {
@@ -50,7 +71,11 @@ func (c *SekaiClient) handleNuverseUserID(retData *utils.HarukiSekaiLoginRespons
 		return nil
 	}
 
-	uidStr, err := extractUserID(retData.UserRegistration.UserID)
+	userID := retData.UserRegistration.UserID
+	if c.Server == utils.HarukiSekaiServerRegionCN && retData.UserID != nil {
+		userID = retData.UserID
+	}
+	uidStr, err := extractUserID(userID)
 	if err != nil {
 		return fmt.Errorf("invalid login response: %w", err)
 	}
@@ -65,8 +90,12 @@ func (c *SekaiClient) updateHeadersFromLogin(retData *utils.HarukiSekaiLoginResp
 	c.HeaderLock.Lock()
 	oldToken := c.Headers["X-Session-Token"]
 	c.Headers["X-Session-Token"] = retData.SessionToken
-	c.Headers["X-Data-Version"] = retData.DataVersion
-	c.Headers["X-Asset-Version"] = retData.AssetVersion
+	if retData.DataVersion != "" {
+		c.Headers["X-Data-Version"] = retData.DataVersion
+	}
+	if retData.AssetVersion != "" {
+		c.Headers["X-Asset-Version"] = retData.AssetVersion
+	}
 	c.Logger.Debugf("account #%s login updated session token (old: %s..., new: %s...)",
 		c.Account.GetUserId(),
 		truncateString(oldToken, 80),
@@ -75,7 +104,7 @@ func (c *SekaiClient) updateHeadersFromLogin(retData *utils.HarukiSekaiLoginResp
 }
 
 func (c *SekaiClient) Login(ctx context.Context) (*utils.HarukiSekaiLoginResponse, error) {
-	loginMsgpack, err := c.Account.Dump()
+	loginMsgpack, err := c.dumpLoginRequest()
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +150,7 @@ func (c *SekaiClient) Login(ctx context.Context) (*utils.HarukiSekaiLoginRespons
 			return nil, err
 		}
 
-		if err := validateLoginResponse(retData); err != nil {
+		if err := c.validateLoginResponse(retData); err != nil {
 			return nil, err
 		}
 
