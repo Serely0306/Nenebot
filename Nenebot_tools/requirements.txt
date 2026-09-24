@@ -1,7 +1,7 @@
 flask>=2.3.0
 flask-cors>=4.0.0
 msgpack>=1.0.0
-sssekai==0.7.44
+pycryptodome>=3.20.0
 requests
 Pillow>=10.0.0
 PyYAML>=6.0.0

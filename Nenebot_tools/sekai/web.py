@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from flask import Blueprint, jsonify, redirect, request, send_from_directory
@@ -111,6 +112,19 @@ def killcatcher():
 def download_file(filename):
     if filename not in DOWNLOAD_FILES:
         return jsonify({"error": "文件不存在"}), 404
+    if request.args.get("sha256") == "1":
+        path = Path(DOWNLOAD_FILES[filename]) / filename
+        try:
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except FileNotFoundError:
+            return jsonify({"error": "文件不存在"}), 404
+        return digest.hexdigest() + "\n", 200, {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-store",
+        }
     return send_from_directory(DOWNLOAD_FILES[filename], filename)
 
 

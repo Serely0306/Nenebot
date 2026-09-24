@@ -19,8 +19,20 @@ class MsrConfig:
 
 
 @dataclass
+class CryptoKeysetConfig:
+    key_hex: str = ""
+    iv_hex: str = ""
+
+
+@dataclass
+class CryptoConfig:
+    keysets: dict[str, CryptoKeysetConfig]
+
+
+@dataclass
 class UploadConfig:
     msr: MsrConfig
+    crypto: CryptoConfig
 
 
 def _deep_get(data: dict[str, Any], path: str, default: Any) -> Any:
@@ -38,6 +50,16 @@ def load_upload_config() -> UploadConfig:
         with CONFIG_PATH.open("r", encoding="utf-8") as fh:
             raw = yaml.safe_load(fh) or {}
 
+    raw_keysets = _deep_get(raw, "crypto.keysets", {})
+    keysets = {
+        str(region): CryptoKeysetConfig(
+            key_hex=str(values.get("key_hex", "")),
+            iv_hex=str(values.get("iv_hex", "")),
+        )
+        for region, values in raw_keysets.items()
+        if isinstance(values, dict)
+    }
+
     return UploadConfig(
         msr=MsrConfig(
             access_key=str(_deep_get(raw, "msr.access_key", "change-me")),
@@ -47,5 +69,6 @@ def load_upload_config() -> UploadConfig:
             render_show_harvested=bool(
                 _deep_get(raw, "msr.render_show_harvested", False)
             ),
-        )
+        ),
+        crypto=CryptoConfig(keysets=keysets),
     )

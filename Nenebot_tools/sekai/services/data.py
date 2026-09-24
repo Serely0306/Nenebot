@@ -6,7 +6,11 @@ from pathlib import Path
 
 from core.runtime import LUNABOT_DATA_BASE
 from sekai.services.crypto import DECRYPT_AVAILABLE, convert_to_serializable, decrypt_binary_data
-from sekai.services.suite import merge_suite_incremental_fields, process_suite_compact
+from sekai.services.suite import (
+    merge_suite_incremental_fields,
+    normalize_mysekai_harvest_maps,
+    process_suite_compact,
+)
 
 
 class UploadProcessingError(RuntimeError):
@@ -60,6 +64,8 @@ def normalize_upload_payload(region: str, data: dict, data_type: str, game_id: s
             with existing_path.open("r", encoding="utf-8") as fh:
                 existing_data = process_suite_compact(json.load(fh))
             data = merge_suite_incremental_fields(data, existing_data)
+    elif data_type == "mysekai":
+        data = normalize_mysekai_harvest_maps(data)
     return data
 
 

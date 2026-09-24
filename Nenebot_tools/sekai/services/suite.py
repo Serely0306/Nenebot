@@ -276,6 +276,57 @@ def process_suite_compact(data: dict) -> dict:
     return restore_suite_fields(result)
 
 
+def _map_mysekai_row(row, keys):
+    if isinstance(row, dict):
+        return row
+    if not isinstance(row, list):
+        return row
+    result = {key: row[index] if index < len(row) else None for index, key in enumerate(keys)}
+    if len(row) > len(keys):
+        extra = row[len(keys):]
+        if any(item is not None for item in extra):
+            result["extra"] = extra
+    return result
+
+
+def normalize_mysekai_harvest_maps(data: dict) -> dict:
+    """Normalize new compact harvest maps while keeping old JSON idempotent."""
+    if not isinstance(data, dict):
+        return data
+    resources = data.get("updatedResources")
+    if not isinstance(resources, dict):
+        return data
+    maps = resources.get("userMysekaiHarvestMaps")
+    if not isinstance(maps, list) or not maps or isinstance(maps[0], dict):
+        return data
+
+    normalized = []
+    for site in maps:
+        if not isinstance(site, list) or len(site) < 3:
+            normalized.append(site)
+            continue
+        site_id, fixtures, drops = site[0], site[1], site[2]
+        normalized.append({
+            "mysekaiSiteId": site_id,
+            "userMysekaiSiteHarvestFixtures": [
+                _map_mysekai_row(row, [
+                    "mysekaiSiteHarvestFixtureId", "positionX", "positionZ", "hp",
+                    "userMysekaiSiteHarvestFixtureStatus",
+                ])
+                for row in (fixtures if isinstance(fixtures, list) else [])
+            ],
+            "userMysekaiSiteHarvestResourceDrops": [
+                _map_mysekai_row(row, [
+                    "resourceType", "resourceId", "positionX", "positionZ", "hp",
+                    "seq", "mysekaiSiteHarvestResourceDropStatus", "quantity",
+                ])
+                for row in (drops if isinstance(drops, list) else [])
+            ],
+        })
+    resources["userMysekaiHarvestMaps"] = normalized
+    return data
+
+
 def extract_suite_user_id(data: dict) -> str | None:
     if not isinstance(data, dict):
         return None

@@ -42,6 +42,7 @@ CATCHER_DIR = BASE_DIR.parent / "catcher"
 DOWNLOAD_FILES = {
     "Catcher-android-arm64": str(CATCHER_DIR),
     "config-android.yaml": str(CATCHER_DIR),
+    "config-android.yaml.example": str(CATCHER_DIR),
     "catcher.sh": str(CATCHER_DIR / "scripts"),
     "kill-catcher.sh": str(CATCHER_DIR / "scripts"),
     "uninstall-catcher.sh": str(CATCHER_DIR / "scripts"),

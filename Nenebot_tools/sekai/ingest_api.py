@@ -376,7 +376,7 @@ def upload(data_type):
 
         if is_binary:
             if not DECRYPT_AVAILABLE:
-                return jsonify({"error": "服务器未安装解密依赖，无法处理二进制文件。请安装 sssekai 和 msgpack"}), 500
+                return jsonify({"error": "服务器未安装解密依赖，无法处理二进制文件。请安装 pycryptodome 和 msgpack"}), 500
             try:
                 data = decrypt_binary_data(content, region)
                 data = convert_to_serializable(data)
