@@ -1,0 +1,12 @@
+# Android Catcher 示例配置。已有 config-android.yaml 不会被脚本覆盖。
+listen: "0.0.0.0:8888"
+upload_server: "https://159.75.213.84"
+auto_upload: true
+save_locally: true
+save_dir: "./data"
+android_proxy_ip: "127.0.0.1"
+debug: false
+capture_suite: true
+capture_mysekai: false
+force_mysekai_reload: true
+mitm_target_only: true
