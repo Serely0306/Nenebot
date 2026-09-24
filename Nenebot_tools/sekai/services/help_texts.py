@@ -124,10 +124,26 @@ def build_ios_upload_script(host: str, region: str, data_type: str) -> str:
     upload_url = _build_ios_upload_api_url(host, region, data_type)
     return f"""const uploadUrl = "{upload_url}";
 const chunkSize = 1024 * 1024;
+// Leave time for the original game response before the module's 60s timeout.
+const deadline = Date.now() + 50000;
+let finished = false;
+const timer = setTimeout(() => {{
+  console.log("Upload timed out; passing through the game response");
+  finish();
+}}, 50000);
 
-async function uploadChunk(chunk, uploadId, chunkIndex, totalChunks, originalUrl) {{
-  const response = await $httpClient.post({{
+function finish() {{
+  if (finished) return;
+  finished = true;
+  clearTimeout(timer);
+  $done({{}});
+}}
+
+function uploadChunk(chunk, uploadId, chunkIndex, totalChunks, originalUrl) {{
+  if (finished || Date.now() >= deadline) return Promise.reject(new Error("Upload timed out"));
+  return new Promise((resolve, reject) => $httpClient.post({{
     url: uploadUrl,
+    timeout: Math.max(1, Math.ceil((deadline - Date.now()) / 1000)),
     headers: {{
       "Content-Type": "application/octet-stream",
       "X-Upload-Id": uploadId,
@@ -136,12 +152,58 @@ async function uploadChunk(chunk, uploadId, chunkIndex, totalChunks, originalUrl
       "X-Total-Chunks": String(totalChunks),
     }},
     body: chunk,
-  }});
-
-  if (response.status >= 400) {{
-    console.log("response body:", response.body);
-    throw new Error("Upload failed: HTTP " + response.status);
-  }}
-  return response;
+  }}, (error, response, body) => {{
+    if (error) {{
+      reject(new Error(String(error)));
+    }} else if (!response || response.status < 200 || response.status >= 300) {{
+      console.log("response body:", body || "");
+      reject(new Error("Upload failed: HTTP " + (response ? response.status : "unknown")));
+    }} else {{
+      try {{
+        const result = JSON.parse(body);
+        if (result.success !== true || result.complete !== (chunkIndex === totalChunks - 1)) {{
+          throw new Error("Server did not acknowledge the uploaded chunk");
+        }}
+        resolve(result);
+      }} catch (error) {{
+        reject(error);
+      }}
+    }}
+  }}));
 }}
+
+async function uploadResponse() {{
+  if (typeof $response === "undefined" || Number($response.status) !== 200) {{
+    console.log("Upload skipped: game response was not successful");
+    return;
+  }}
+  const body = $response.body;
+  if (!body || body.byteLength === 0) {{
+    console.log("Upload skipped: response body is empty");
+    return;
+  }}
+
+  let binaryBody;
+  if (body instanceof ArrayBuffer) {{
+    binaryBody = new Uint8Array(body);
+  }} else if (ArrayBuffer.isView(body)) {{
+    binaryBody = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  }} else {{
+    throw new Error("Expected binary response; enable binary-body-mode");
+  }}
+  const totalChunks = Math.ceil(binaryBody.byteLength / chunkSize);
+  const uploadId = "ios-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+  const originalUrl = typeof $request !== "undefined" ? $request.url : "";
+  if (!originalUrl) throw new Error("Missing original request URL");
+  for (let index = 0; index < totalChunks; index++) {{
+    const start = index * chunkSize;
+    const end = Math.min(start + chunkSize, binaryBody.byteLength);
+    await uploadChunk(binaryBody.slice(start, end), uploadId, index, totalChunks, originalUrl);
+  }}
+  console.log("Upload complete: " + binaryBody.byteLength + " bytes in " + totalChunks + " chunk(s)");
+}}
+
+uploadResponse()
+  .catch(error => console.log("Upload failed:", error.message || error))
+  .finally(finish);
 """
