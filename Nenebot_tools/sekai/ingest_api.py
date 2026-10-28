@@ -14,7 +14,7 @@ from flask import Blueprint, current_app, jsonify, request, send_file
 from core.runtime import BASE_DIR, REGION_API_HOSTS, REGION_NAMES, VALID_DATA_TYPES, VALID_REGIONS, get_msr_repo, get_upload_config
 from sekai.services.bindings import ensure_bound_account, get_bind_info, load_profile_db, mask_game_id
 from sekai.services.crypto import DECRYPT_AVAILABLE, convert_to_serializable, decrypt_binary_data
-from sekai.services.data import UploadProcessingError, normalize_upload_payload, process_and_save_data, save_json_payload
+from sekai.services.data import UploadProcessingError, normalize_upload_payload, process_and_save_data, save_json_payload, save_upload_payload
 from sekai.services.msr_service import MsrQueryError, render_msr_image
 from sekai.services.suite import extract_suite_user_id
 
@@ -64,8 +64,15 @@ def _cleanup_ios_session(session_dir: Path) -> None:
 def _extract_uid_from_original_url(original_url: str, data_type: str) -> str | None:
     if data_type == "suite":
         match = re.search(r"/api/suite/user/(\d+)(?:$|\?)", original_url)
+    elif data_type == "mysekai_birthday":
+        match = re.search(r"/api/user/(\d+)/mysekai/birthday-party/\d+/delivery(?:$|\?)", original_url)
     else:
         match = re.search(r"/api/user/(\d+)/mysekai(?:$|\?)", original_url)
+    return match.group(1) if match else None
+
+
+def _extract_birthday_party_id(original_url: str) -> str | None:
+    match = re.search(r"/api/user/\d+/mysekai/birthday-party/(\d+)/delivery(?:$|\?)", original_url)
     return match.group(1) if match else None
 
 
@@ -247,7 +254,13 @@ def ios_upload():
         _cleanup_ios_session(session_dir)
 
     try:
-        process_and_save_data(region, uid, data_bytes, data_type)
+        metadata = {}
+        if data_type == "mysekai_birthday":
+            party_id = _extract_birthday_party_id(original_url)
+            if not party_id:
+                return jsonify({"error": "Unable to extract birthday party id from original url"}), 400
+            metadata["birthday_party_id"] = party_id
+        process_and_save_data(region, uid, data_bytes, data_type, metadata)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     return jsonify(
@@ -284,14 +297,12 @@ def proxy_upload(region, uid, data_type="mysekai"):
                 data["source"] = "direct_upload"
             if "local_source" not in data:
                 data["local_source"] = "direct_upload"
-            if "updatedResources" in data:
+            if data_type != "mysekai_birthday" and "updatedResources" in data:
                 if "userMysekaiGamedata" not in data["updatedResources"]:
                     data["updatedResources"]["userMysekaiGamedata"] = {}
                 data["updatedResources"]["userMysekaiGamedata"]["userId"] = int(uid)
 
-            if data_type == "suite":
-                data = normalize_upload_payload(region, data, data_type, str(uid), data["source"], data["local_source"])
-            save_path = save_json_payload(region, data_type, str(uid), data)
+            save_path = save_upload_payload(region, str(uid), data_type, data)
             print(f"直接上传成功: {region} user {uid} ({data_type}) -> {save_path}")
             return jsonify({"success": True, "message": f"{region} user {uid} data saved", "file_path": str(save_path)})
         except Exception as exc:

@@ -16,13 +16,15 @@ def build_suite_help_ios(host: str) -> str:
 #!system=ios
 #!redirect=0
 #!mitm=2
-#!total=3
+#!total=5
 # 按需修改配置注释
 
 [Script]
 # 国服
 SCRIPT_cn_suite_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "cn", "suite")}
 SCRIPT_cn_suite_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "cn", "suite")}
+SCRIPT_cn_birthday_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\/birthday-party\\/(\\d+)\\/delivery$, script-path={_build_upload_script_url(host, "cn", "mysekai_birthday")}
+SCRIPT_cn_birthday_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\/birthday-party\\/(\\d+)\\/delivery$, script-path={_build_upload_script_url(host, "cn", "mysekai_birthday")}
 
 # 日服 (取消注释以启用)
 # SCRIPT_jp_suite = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "jp", "suite")}
@@ -39,7 +41,7 @@ def build_all_help_ios(host: str) -> str:
 #!system=ios
 #!redirect=3
 #!mitm=3
-#!total=6
+#!total=8
 # 按需修改配置注释
 
 [URL Rewrite]
@@ -51,6 +53,8 @@ def build_all_help_ios(host: str) -> str:
 # 国服 Suite
 SCRIPT_cn_suite_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "cn", "suite")}
 SCRIPT_cn_suite_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "cn", "suite")}
+SCRIPT_cn_birthday_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\/birthday-party\\/(\\d+)\\/delivery$, script-path={_build_upload_script_url(host, "cn", "mysekai_birthday")}
+SCRIPT_cn_birthday_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\/birthday-party\\/(\\d+)\\/delivery$, script-path={_build_upload_script_url(host, "cn", "mysekai_birthday")}
 
 # 日服 (按需取消注释 Suite；MySekai 已保留)
 # SCRIPT_jp_suite = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/suite\\/user\\/(\\d+)(\\?isLogin=true)?$, script-path={_build_upload_script_url(host, "jp", "suite")}
@@ -68,7 +72,7 @@ def build_mysekai_help_ios(host: str) -> str:
 #!system=ios
 #!redirect=3
 #!mitm=3
-#!total=7
+#!total=9
 # 按需修改配置注释
 
 [URL Rewrite]
@@ -85,6 +89,8 @@ def build_mysekai_help_ios(host: str) -> str:
 # 国服
 SCRIPT_cn_mysekai_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "cn", "mysekai")}
 SCRIPT_cn_mysekai_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "cn", "mysekai")}
+SCRIPT_cn_birthday_1 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-1\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\/birthday-party\\/(\\d+)\\/delivery$, script-path={_build_upload_script_url(host, "cn", "mysekai_birthday")}
+SCRIPT_cn_birthday_2 = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/mkcn-prod-public-60001-2\\.dailygn\\.com\\/api\\/user\\/(\\d+)\\/mysekai\\/birthday-party\\/(\\d+)\\/delivery$, script-path={_build_upload_script_url(host, "cn", "mysekai_birthday")}
 
 # 日服 (取消注释以启用)
 # SCRIPT_jp_mysekai = type=http-response, requires-body=1, binary-body-mode=1, max-size=100000000, timeout=60, pattern=^https:\\/\\/production-game-api\\.sekai\\.colorfulpalette\\.org\\/api\\/user\\/(\\d+)\\/mysekai\\?isForceAllReloadOnlyMysekai=True, script-path={_build_upload_script_url(host, "jp", "mysekai")}

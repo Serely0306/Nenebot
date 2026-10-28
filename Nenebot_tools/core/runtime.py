@@ -9,7 +9,7 @@ from sekai.services.sekai_assets import SekaiAssetRepository
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-VALID_DATA_TYPES = ["suite", "mysekai"]
+VALID_DATA_TYPES = ["suite", "mysekai", "mysekai_birthday"]
 VALID_REGIONS = ["jp", "cn", "tw", "kr", "en"]
 REGION_TO_KEYSET = {
     "jp": "jp",

@@ -6,9 +6,34 @@ import requests as http_requests
 from flask import Blueprint, jsonify, request
 
 from core.runtime import LUNABOT_DATA_BASE, REGION_NAMES, VALID_REGIONS
+from sekai.services.birthday import read_events
 from sekai.services.data import load_and_filter_json
 
 bp = Blueprint("sekai_bot_api", __name__, url_prefix="/api")
+
+
+@bp.route("/mysekai/<region>/birthday_events", methods=["POST"])
+def get_mysekai_birthday_events(region):
+    region = region.lower()
+    if region not in VALID_REGIONS:
+        return jsonify({"error": f"不支持的区服: {region}"}), 404
+    payload = request.get_json(silent=True) or {}
+    uid_modes = payload.get("uid_modes", []) if isinstance(payload, dict) else payload
+    after = payload.get("after", {}) if isinstance(payload, dict) else {}
+    limit = min(max(int(payload.get("limit", 50)), 1), 200) if isinstance(payload, dict) else 50
+    events = []
+    next_cursors = {}
+    for item in uid_modes:
+        try:
+            uid = str(item[0])
+        except (TypeError, IndexError):
+            continue
+        cursor = after.get(uid) if isinstance(after, dict) else None
+        batch = read_events(LUNABOT_DATA_BASE, region, uid, int(cursor) if cursor is not None else None, limit)
+        events.extend(batch["events"])
+        next_cursors[uid] = batch["next_cursor"]
+    events.sort(key=lambda item: (item["event_time"], item["event_id"]))
+    return jsonify({"events": events[:limit], "next_cursors": next_cursors})
 
 
 @bp.route("/mysekai/<region>/<uid>", methods=["GET"])
