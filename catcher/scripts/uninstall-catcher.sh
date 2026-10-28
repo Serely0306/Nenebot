@@ -23,9 +23,10 @@ echo "========== LunaBot Catcher 卸载 =========="
 
 # 1. 清除系统代理
 echo "[1/4] 清除系统代理..."
-settings put global http_proxy :0 2>/dev/null
-settings put global global_http_proxy_host "" 2>/dev/null
-settings put global global_http_proxy_port 0 2>/dev/null
+su2 <<SETTINGS
+settings put global http_proxy :0
+settings put global https_proxy :0
+SETTINGS
 echo "  ✓ 代理已清除"
 
 # 2. 删除系统证书

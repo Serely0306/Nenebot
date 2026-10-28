@@ -17,8 +17,9 @@ type Config struct {
 	Debug          bool   `yaml:"debug"`
 
 	// 抓取内容控制
-	CaptureMysekai bool `yaml:"capture_mysekai"`
-	CaptureSuite   bool `yaml:"capture_suite"`
+	CaptureMysekai         bool `yaml:"capture_mysekai"`
+	CaptureMysekaiBirthday bool `yaml:"capture_mysekai_birthday"`
+	CaptureSuite           bool `yaml:"capture_suite"`
 
 	// 强制全量刷新 MySekai：将请求中的 isForceAllReloadOnlyMysekai=False 篡改为 True
 	// 开启后每次进入 MySekai 页面都会获取完整数据（而不是仅第一次进入）
@@ -37,19 +38,20 @@ type Config struct {
 // DefaultConfig 返回默认配置
 func DefaultConfig() *Config {
 	return &Config{
-		Listen:             "0.0.0.0:8888",
-		UploadServer:       "",
-		AutoUpload:         true,
-		SaveLocally:        false,
-		SaveDir:            "./data",
-		AndroidProxyIP:     "",
-		Debug:              false,
-		CaptureMysekai:     false,
-		CaptureSuite:       true,
-		ForceMysekaiReload: false,
-		MitmTargetOnly:     true,
-		ExternalCertPath:   "",
-		ExternalKeyPath:    "",
+		Listen:                 "0.0.0.0:8888",
+		UploadServer:           "",
+		AutoUpload:             true,
+		SaveLocally:            false,
+		SaveDir:                "./data",
+		AndroidProxyIP:         "",
+		Debug:                  false,
+		CaptureMysekai:         false,
+		CaptureMysekaiBirthday: false,
+		CaptureSuite:           true,
+		ForceMysekaiReload:     false,
+		MitmTargetOnly:         true,
+		ExternalCertPath:       "",
+		ExternalKeyPath:        "",
 	}
 }
 

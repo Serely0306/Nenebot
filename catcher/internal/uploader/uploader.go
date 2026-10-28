@@ -86,7 +86,13 @@ func (u *Uploader) saveToLocal(region, uid, dataType string, data map[string]int
 		return err
 	}
 
-	filePath := filepath.Join(dir, uid+".json")
+	fileName := uid + ".json"
+	if dataType == "mysekai_birthday" {
+		eventID, _ := data["birthday_party_id"].(string)
+		stamp, _ := data["upload_time"].(int64)
+		fileName = fmt.Sprintf("%s-%s-%d.json", uid, eventID, stamp)
+	}
+	filePath := filepath.Join(dir, fileName)
 	jsonData, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return err
@@ -102,7 +108,11 @@ func (u *Uploader) SaveRawData(region, uid, dataType string, rawData []byte) err
 		return err
 	}
 
-	filePath := filepath.Join(dir, uid+".bin")
+	fileName := uid + ".bin"
+	if dataType == "mysekai_birthday" {
+		fileName = uid + "-" + fmt.Sprint(time.Now().UnixMilli()) + ".bin"
+	}
+	filePath := filepath.Join(dir, fileName)
 	fmt.Printf("[保存] 原始数据 -> %s (%d bytes)\n", filePath, len(rawData))
 	return os.WriteFile(filePath, rawData, 0644)
 }

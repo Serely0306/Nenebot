@@ -15,8 +15,8 @@ AUTO_UPDATE_BINARY=1
 AUTO_UPDATE_CONFIG_EXAMPLE=1
 CONFIG_NAME="config-android.yaml"
 CONFIG_EXAMPLE_NAME="config-android.yaml.example"
-# 下载超时（秒），避免离线时无限等待。
-DOWNLOAD_TIMEOUT=60
+# 单个文件下载超时（秒）；Android 网络较慢时，8MB 左右的二进制需要更长时间。
+DOWNLOAD_TIMEOUT=300
 
 case "$AUTO_UPDATE_BINARY:$AUTO_UPDATE_CONFIG_EXAMPLE" in
     0:0|0:1|1:0|1:1) ;;
@@ -36,11 +36,11 @@ download() {
     download_dest="$1"; download_url="$2"; download_tmp="$1.tmp.$$"
     rm -f "$download_tmp"
     if command -v curl >/dev/null 2>&1; then
-        curl -k -fsSL --connect-timeout 10 --max-time "$DOWNLOAD_TIMEOUT" -o "$download_tmp" "$download_url" || {
+        curl -k -fsSL --connect-timeout 15 --retry 2 --retry-delay 2 --max-time "$DOWNLOAD_TIMEOUT" -o "$download_tmp" "$download_url" || {
             rm -f "$download_tmp"; return 1;
         }
     elif command -v wget >/dev/null 2>&1; then
-        wget --no-check-certificate -T "$DOWNLOAD_TIMEOUT" -q -O "$download_tmp" "$download_url" || {
+        wget --no-check-certificate -T "$DOWNLOAD_TIMEOUT" -t 3 -q -O "$download_tmp" "$download_url" || {
             rm -f "$download_tmp"; return 1;
         }
     else echo "缺少 curl 或 wget" >&2; return 1; fi

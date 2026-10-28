@@ -24,6 +24,7 @@ debug: false
 # ==================== 抓取控制 ====================
 # 是否抓取 MySekai 数据
 capture_mysekai: false
+capture_mysekai_birthday: true
 
 # 是否抓取 Suite 数据
 capture_suite: true

@@ -101,6 +101,9 @@ func NewMitmProxy(up *uploader.Uploader, cfg *config.Config, dataDir string) (*M
 	if captureMysekai {
 		log.Printf("[配置] MySekai 抓取: 已启用")
 	}
+	if cfg.CaptureMysekaiBirthday {
+		log.Printf("[配置] MySekai 生日刷新抓取: 已启用")
+	}
 	if cfg.ForceMysekaiReload {
 		log.Printf("[配置] MySekai 强制全量刷新: 已启用")
 	}
@@ -282,6 +285,7 @@ func (p *MitmProxy) setupRequestModifier() {
 
 // setupResponseHandler 设置响应处理器
 func (p *MitmProxy) setupResponseHandler() {
+	birthdayPattern := regexp.MustCompile(`^/api/user/(\d+)/mysekai/birthday-party/(\d+)/delivery$`)
 	// MySekai: /api/user/{uid}/mysekai
 	mysekaiPattern := regexp.MustCompile(`^/api/user/(\d+)/mysekai$`)
 	// Suite: /api/suite/user/{uid}
@@ -307,6 +311,18 @@ func (p *MitmProxy) setupResponseHandler() {
 		// 只处理成功的响应
 		if resp.StatusCode != 200 {
 			return resp
+		}
+
+		if p.config.CaptureMysekaiBirthday {
+			if matches := birthdayPattern.FindStringSubmatch(path); matches != nil {
+				body, err := readResponseBody(resp)
+				if err != nil || len(body) == 0 {
+					return resp
+				}
+				log.Printf("[拦截] %s - mysekai_birthday - UID: %s party: %s\n", region, matches[1], matches[2])
+				go p.processData(region, matches[1], "mysekai_birthday", body, matches[2])
+				return resp
+			}
 		}
 
 		// 尝试匹配 MySekai API
@@ -341,7 +357,7 @@ func (p *MitmProxy) setupResponseHandler() {
 				log.Printf("[请求] %s?%s\n", path, query)
 				log.Printf("%s\n", "==================================================")
 
-				go p.processData(region, uid, "mysekai", body)
+				go p.processData(region, uid, "mysekai", body, "")
 				return resp
 			}
 		}
@@ -368,7 +384,7 @@ func (p *MitmProxy) setupResponseHandler() {
 				log.Printf("[请求] %s\n", path)
 				log.Printf("%s\n", "==================================================")
 
-				go p.processData(region, uid, "suite", body)
+				go p.processData(region, uid, "suite", body, "")
 				return resp
 			}
 		}
@@ -378,7 +394,7 @@ func (p *MitmProxy) setupResponseHandler() {
 }
 
 // processData 处理抓取的数据
-func (p *MitmProxy) processData(region, uid, dataType string, body []byte) {
+func (p *MitmProxy) processData(region, uid, dataType string, body []byte, eventID string) {
 	// save_locally 开启时，始终保存原始二进制数据
 	if p.uploader.SaveLocally {
 		if saveErr := p.uploader.SaveRawData(region, uid, dataType, body); saveErr != nil {
@@ -408,6 +424,9 @@ func (p *MitmProxy) processData(region, uid, dataType string, body []byte) {
 	}
 
 	// 上传
+	if eventID != "" {
+		data["birthday_party_id"] = eventID
+	}
 	if err := p.uploader.Upload(region, uid, dataType, data); err != nil {
 		log.Printf("[%s] 上传失败: %v\n", dataType, err)
 		return

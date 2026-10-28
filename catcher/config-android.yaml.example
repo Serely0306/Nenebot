@@ -8,5 +8,6 @@ android_proxy_ip: "127.0.0.1"
 debug: false
 capture_suite: true
 capture_mysekai: false
+capture_mysekai_birthday: true
 force_mysekai_reload: true
 mitm_target_only: true
