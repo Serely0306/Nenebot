@@ -757,7 +757,7 @@ async def compose_mysekai_harvest_map_image(
     return await canvas.get_img()
 
 # 合成mysekai资源图片 返回图片列表
-async def compose_mysekai_res_image(ctx: SekaiHandlerContext, qid: int, show_harvested: bool, check_time: bool) -> List[Image.Image]:
+async def compose_mysekai_res_image(ctx: SekaiHandlerContext, qid: int, show_harvested: bool, check_time: bool, mysekai_info_override: dict = None) -> List[Image.Image]:
     with ProfileTimer("msr.get_basic_profile"):
         uid = get_player_bind_id(ctx)
 
@@ -771,7 +771,10 @@ async def compose_mysekai_res_image(ctx: SekaiHandlerContext, qid: int, show_har
         basic_profile = await get_basic_profile(ctx, uid)
 
     with ProfileTimer("msr.get_mysekai_info"):
-        mysekai_info, pmsg = await get_mysekai_info(ctx, qid, raise_exc=True)
+        if mysekai_info_override is None:
+            mysekai_info, pmsg = await get_mysekai_info(ctx, qid, raise_exc=True)
+        else:
+            mysekai_info, pmsg = mysekai_info_override, ""
 
     upload_time = datetime.fromtimestamp(mysekai_info['upload_time'] / 1000)
     if upload_time < get_mysekai_last_refresh_time_and_reason(ctx)[0] and check_time:
@@ -2419,7 +2422,8 @@ async def msr_auto_push():
         ctx = SekaiHandlerContext.from_region(region)
 
         get_upload_time_url = get_gameapi_config(ctx).mysekai_upload_time_api_url
-        if not get_upload_time_url: continue
+        birthday_events_url = get_gameapi_config(ctx).mysekai_birthday_events_api_url
+        if not get_upload_time_url and not birthday_events_url: continue
         if region not in msr_sub.regions: continue
 
         # 获取订阅的用户列表和抓包模式
@@ -2434,6 +2438,26 @@ async def msr_auto_push():
                     pass
         if not uid_modes: continue
 
+        birthday_events = []
+        birthday_cursors = file_db.get(f"{region}_msr_birthday_event_cursors", {})
+        if birthday_events_url:
+            try:
+                response = await request_gameapi(
+                    birthday_events_url,
+                    method='POST',
+                    json={"uid_modes": uid_modes, "after": birthday_cursors, "limit": 200},
+                )
+                birthday_events = response.get("events", []) if isinstance(response, dict) else []
+                if isinstance(response, dict):
+                    event_uids = {str(event.get("user_id")) for event in birthday_events}
+                    for uid, cursor in (response.get("next_cursors") or {}).items():
+                        if cursor is not None and str(uid) not in event_uids:
+                            birthday_cursors[str(uid)] = cursor
+                    if not event_uids:
+                        file_db.set(f"{region}_msr_birthday_event_cursors", birthday_cursors)
+            except Exception as e:
+                logger.warning(f"获取{region_name}Mysekai生日刷新事件失败: {get_exc_desc(e)}")
+
         # 向api服务器更新msr订阅信息
         update_msr_sub_url = get_gameapi_config(ctx).update_msr_sub_api_url
         if update_msr_sub_url:
@@ -2443,11 +2467,13 @@ async def msr_auto_push():
                 logger.warning(f"更新{region_name}Mysekai订阅信息失败: {get_exc_desc(e)}")
 
         # 获取不同uid_mode的Mysekai上传时间
-        try:
-            upload_times: list[int] = await request_gameapi(get_upload_time_url, json=uid_modes)
-        except Exception as e:
-            logger.warning(f"获取{region_name}Mysekai上传时间失败: {get_exc_desc(e)}")
-            continue
+        upload_times: list[int] = []
+        if get_upload_time_url:
+            try:
+                upload_times = await request_gameapi(get_upload_time_url, json=uid_modes)
+            except Exception as e:
+                logger.warning(f"获取{region_name}Mysekai上传时间失败: {get_exc_desc(e)}")
+                upload_times = []
         upload_times: dict[tuple[str, str], int] = { uid_mode: ts for uid_mode, ts in zip(uid_modes, upload_times) }
 
         need_push_uid_modes = [] # 需要推送的uid_mode（有及时更新数据并且没有距离太久的）
@@ -2458,6 +2484,29 @@ async def msr_auto_push():
                 need_push_uid_modes.append(uid_mode)
 
         tasks = []
+
+        birthday_tasks = []
+        for event in birthday_events:
+            snapshot = event.get("snapshot")
+            uid = str(event.get("user_id", ""))
+            if not snapshot or not uid:
+                continue
+            for qid, gid in msr_sub.get_all_gid_uid(region):
+                if check_in_blacklist(qid): continue
+                if gid is not None and not gbl.check_id(gid): continue
+                if gid is not None and region in bd_msr_sub.regions and not bd_msr_sub.is_subbed(region, gid): continue
+                bound = False
+                for i in range(get_player_bind_count(ctx, qid)):
+                    try:
+                        bound_uid = get_player_bind_id(ctx, qid, index=i)
+                    except Exception:
+                        continue
+                    if bound_uid and str(bound_uid) == uid:
+                        bound = True
+                        break
+                if not bound:
+                    continue
+                birthday_tasks.append((gid, qid, uid, event))
                 
         for qid, gid in msr_sub.get_all_gid_uid(region):
             if check_in_blacklist(qid): continue
@@ -2518,4 +2567,38 @@ async def msr_auto_push():
                         await send_private_msg_by_bot(qid, f"你的{region_name}Mysekai资源查询自动推送失败: {get_exc_desc(e)}")
                 except: pass
 
+        async def push_birthday(task):
+            gid, qid, uid, event = task
+            user_ctx = SekaiHandlerContext.from_region(region)
+            user_ctx.user_id = int(qid)
+            user_ctx.group_id = int(gid) if gid is not None else None
+            index = get_player_bind_id_index(ctx, qid, int(uid))
+            if index is None: return (uid, event.get("sequence"), False)
+            user_ctx.uid_arg = f"u{index+1}"
+            try:
+                contents = [await get_image_cq(img, low_quality=True) for img in await compose_mysekai_res_image(user_ctx, qid, False, False, event["snapshot"])]
+                prefix = f"[CQ:at,qq={qid}]的{region_name}生日刷新MSR推送" if gid is not None else f"你的{region_name}生日刷新MSR推送"
+                if gid is not None:
+                    await send_group_msg_by_bot(gid, prefix + "".join(contents))
+                else:
+                    await send_private_msg_by_bot(qid, prefix + "".join(contents))
+                return (uid, event.get("sequence"), True)
+            except Exception:
+                logger.print_exc(f"生日刷新MSR推送失败: {qid}")
+                return (uid, event.get("sequence"), False)
+
         await batch_gather(*[push(task) for task in tasks], batch_size=MSR_PUSH_CONCURRENCY_CFG.get())
+        birthday_results = await batch_gather(*[push_birthday(task) for task in birthday_tasks], batch_size=MSR_PUSH_CONCURRENCY_CFG.get())
+        event_tasks = {}
+        for task in birthday_tasks:
+            event_tasks.setdefault((str(task[2]), task[3].get("sequence")), 0)
+            event_tasks[(str(task[2]), task[3].get("sequence"))] += 1
+        event_successes = {}
+        for uid, sequence, success in birthday_results:
+            key = (str(uid), sequence)
+            event_successes[key] = event_successes.get(key, 0) + int(bool(success))
+        for key, required in event_tasks.items():
+            if event_successes.get(key, 0) >= required:
+                birthday_cursors[key[0]] = max(birthday_cursors.get(key[0], 0), key[1] or 0)
+        if event_tasks:
+            file_db.set(f"{region}_msr_birthday_event_cursors", birthday_cursors)

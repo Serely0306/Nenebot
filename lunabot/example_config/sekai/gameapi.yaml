@@ -19,3 +19,7 @@ tw:
 # 国服
 cn:
   wish_ranking_api_url:           "http://127.0.0.1:9999/api/cn/activity/wish-ranking/top-ladder" # 游戏API: 获取心愿榜前500与榜线
+  # 以下接口由 Nenebot_tools 提供；生日刷新事件使用独立游标持续推送
+  # mysekai_upload_time_api_url:  "http://127.0.0.1:9999/api/mysekai/cn/upload_times"
+  # mysekai_birthday_events_api_url: "http://127.0.0.1:9999/api/mysekai/cn/birthday_events"
+  # update_msr_sub_api_url:       "http://127.0.0.1:9999/api/mysekai/cn/msr_sub"
