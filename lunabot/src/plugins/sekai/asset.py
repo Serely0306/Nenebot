@@ -4,6 +4,8 @@ import threading
 from urllib.parse import urlsplit, urlunsplit
 import inspect
 import re
+from collections import OrderedDict
+from collections.abc import MutableMapping
 
 asset_config = Config('sekai.asset')
 ASSET_DEBUG_CFG = asset_config.item('debug')
@@ -1016,6 +1018,94 @@ class RegionRipAssetSource:
             self.url_map_method = DEFAULT_URL_MAP_METHODS[self.name]
         self.prefixes = prefixes
 
+
+class _SharedImageCache:
+    def __init__(self):
+        self.entries = OrderedDict()
+        self.size_bytes = 0
+        self.lock = threading.RLock()
+
+    def _limit(self):
+        return max(0, int(parse_cfg_num(asset_config.get('image_cache_max_bytes', 64 * 1024 * 1024))))
+
+    def _remove(self, key):
+        image, metadata, size_bytes = self.entries.pop(key)
+        self.size_bytes -= size_bytes
+        image.close()
+
+    def _trim(self, limit):
+        while self.size_bytes > limit and self.entries:
+            self._remove(next(iter(self.entries)))
+
+    def get_copy(self, key):
+        with self.lock:
+            self._trim(self._limit())
+            if key not in self.entries:
+                return None
+            image, metadata, size_bytes = self.entries[key]
+            self.entries.move_to_end(key)
+            return image.copy(), metadata
+
+    def put_copy(self, key, image, metadata=None):
+        # Cache entries own their pixels; eviction must never close a caller's image.
+        size_bytes = image.width * image.height * max(4, len(image.getbands()))
+        with self.lock:
+            if key in self.entries:
+                self._remove(key)
+            limit = self._limit()
+            self._trim(limit)
+            if size_bytes > limit or not limit:
+                return
+            self._trim(limit - size_bytes)
+            self.entries[key] = (image.copy(), metadata, size_bytes)
+            self.size_bytes += size_bytes
+
+
+_shared_image_cache = _SharedImageCache()
+
+
+class _ImageCacheView(MutableMapping):
+    def __init__(self, namespace):
+        self.namespace = namespace
+
+    def get_entry(self, key):
+        return _shared_image_cache.get_copy((self.namespace, key))
+
+    def put_entry(self, key, image, metadata=None):
+        _shared_image_cache.put_copy((self.namespace, key), image, metadata)
+
+    def __getitem__(self, key):
+        entry = self.get_entry(key)
+        if entry is None:
+            raise KeyError(key)
+        return entry[0]
+
+    def __setitem__(self, key, image):
+        self.put_entry(key, image)
+
+    def __delitem__(self, key):
+        with _shared_image_cache.lock:
+            _shared_image_cache._remove((self.namespace, key))
+
+    def __iter__(self):
+        with _shared_image_cache.lock:
+            return iter([key for namespace, key in _shared_image_cache.entries if namespace == self.namespace])
+
+    def __len__(self):
+        with _shared_image_cache.lock:
+            return sum(namespace == self.namespace for namespace, key in _shared_image_cache.entries)
+
+    def __contains__(self, key):
+        with _shared_image_cache.lock:
+            return (self.namespace, key) in _shared_image_cache.entries
+
+    def clear(self):
+        with _shared_image_cache.lock:
+            for key in list(_shared_image_cache.entries):
+                if key[0] == self.namespace:
+                    _shared_image_cache._remove(key)
+
+
 class RegionRipAssetManger:
     """
     区服解包资源管理器
@@ -1028,7 +1118,7 @@ class RegionRipAssetManger:
         self.region = region
         self.sources = sources
         self.cache_dir = pjoin(DEFAULT_RIP_ASSET_DIR, region)
-        self.cached_images: Dict[str, Image.Image] = {}
+        self.cached_images = _ImageCacheView(('rip', region))
         create_folder(self.cache_dir)
     
     @classmethod
@@ -1063,6 +1153,7 @@ class RegionRipAssetManger:
         default=None, 
         cache_expire_secs=None, 
         timeout: Union[int, ConfigItem]=DEFAULT_GET_RIP_ASSET_TIMEOUT_CFG,
+        validate=None,
     ) -> bytes:
         """
         获取任意类型解包资源，返回二进制数据，参数：
@@ -1081,7 +1172,10 @@ class RegionRipAssetManger:
                 if cache_expire_secs is not None:
                     assert datetime.now().timestamp() - os.path.getmtime(cache_path) < cache_expire_secs
                 with open(cache_path, "rb") as f:
-                    return f.read()
+                    data = f.read()
+                if validate:
+                    validate(data)
+                return data
             except:
                 pass
         
@@ -1097,6 +1191,8 @@ class RegionRipAssetManger:
                     source.base_url += "/"
                 url = source.url_map_method(source.base_url + path)
                 data = await self._download_data(url, get_cfg_or_value(timeout))
+                if validate:
+                    validate(data)
                 if use_cache:
                     create_parent_folder(cache_path)
                     with open(cache_path, "wb") as f:
@@ -1198,26 +1294,54 @@ class RegionRipAssetManger:
         - `use_img_cache`: 是否使用图片缓存
         - `img_cache_max_res`: 图片缓存最大分辨率，None则不缩放
         """
-        # 尝试从图片缓存加载
-        if use_img_cache and path in self.cached_images:
-            return self.cached_images[path].copy()
-        data = await self.get_asset(path, use_cache, allow_error, default, cache_expire_secs, get_cfg_or_value(timeout))
-        try: 
-            img = open_image(io.BytesIO(data))
-            if use_img_cache:
-                if img_cache_max_res:
-                    max_res = parse_cfg_num(get_cfg_or_value(img_cache_max_res))
-                    w, h = img.size
-                    if w * h > max_res:
-                        scale = math.sqrt(max_res / (w * h))
-                        img = resize_keep_ratio(img, scale, mode='scale')
-                self.cached_images[path] = img
-            return img
-        except: pass
-        if not allow_error:
-            raise Exception(f"解析下载的 {self.region} 解包资源 {path} 为图片失败")
-        logger.warning(f"解析下载的 {self.region} 解包资源 {path} 为图片失败: 返回默认值")
-        return default
+        max_res = parse_cfg_num(get_cfg_or_value(img_cache_max_res)) if img_cache_max_res else None
+        if use_cache and use_img_cache:
+            entry = self.cached_images.get_entry(path)
+            if entry is not None:
+                image, metadata = entry
+                if metadata is not None:
+                    cached_res, cached_time = metadata
+                    if cached_res == max_res and (cache_expire_secs is None or datetime.now().timestamp() - cached_time < cache_expire_secs):
+                        return image
+                image.close()
+
+        image = None
+
+        def validate_image(data):
+            nonlocal image
+            if image is not None:
+                image.close()
+                image = None
+            image = open_image(io.BytesIO(data))
+
+        try:
+            data = await self.get_asset(
+                path, use_cache, allow_error, None, cache_expire_secs,
+                get_cfg_or_value(timeout), validate=validate_image,
+            )
+            if data is None or image is None:
+                if image is not None:
+                    image.close()
+                return default.copy() if isinstance(default, Image.Image) else default
+            if use_img_cache and max_res:
+                w, h = image.size
+                if w * h > max_res:
+                    resized = resize_keep_ratio(image, math.sqrt(max_res / (w * h)), mode='scale')
+                    if resized is not image:
+                        image.close()
+                    image = resized
+            if use_cache and use_img_cache:
+                cache_time = datetime.now().timestamp()
+                try:
+                    cache_time = os.path.getmtime(pjoin(self.cache_dir, path))
+                except OSError:
+                    pass
+                self.cached_images.put_entry(path, image, (max_res, cache_time))
+            return image
+        except:
+            if image is not None:
+                image.close()
+            raise
     
     async def json(
         self,
@@ -1254,8 +1378,8 @@ DEFAULT_STATIC_IMAGE_DIR = f"{SEKAI_ASSET_DIR}/static_images"
 class StaticImageRes:
     def __init__(self, dir: str = None):
         self.dir = dir or DEFAULT_STATIC_IMAGE_DIR
-        self.images: Dict[str, Tuple[Image.Image, int]] = {}  # path -> (image, mtime)
-        self.lock = threading.Lock()
+        self.images = _ImageCacheView(('static', osp.abspath(self.dir)))
+        self.lock = _shared_image_cache.lock
 
     def get(self, path: str, size: Tuple[int, int] = None) -> Image.Image:
         """
@@ -1268,15 +1392,24 @@ class StaticImageRes:
             raise FileNotFoundError(f"静态图片资源 {fullpath} 不存在")
         try:
             with self.lock:
-                img, time = self.images.get(path, (None, None))
-                mtime = int(os.path.getmtime(fullpath) * 1000)
-                if mtime != time:
-                    self.images[path] = (open_image(fullpath).convert('RGBA'), mtime)
-                img, time = self.images[path]
+                stat = os.stat(fullpath)
+                version = (stat.st_mtime_ns, stat.st_size)
+                entry = self.images.get_entry(path)
+                if entry is not None:
+                    img, cached_version = entry
+                    if cached_version != version:
+                        img.close()
+                        entry = None
+                if entry is None:
+                    with open_image(fullpath) as source:
+                        img = source.convert('RGBA')
+                    self.images.put_entry(path, img, version)
                 if size:
-                    img = resize_by_optional_size(img, size)
-                self.images[path] = (img, time) 
-                return self.images[path][0]
+                    resized = resize_by_optional_size(img, size)
+                    if resized is not img:
+                        img.close()
+                    img = resized
+                return img
         except:
             raise FileNotFoundError(f"读取静态图片资源 {fullpath} 失败")
 

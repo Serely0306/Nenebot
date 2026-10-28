@@ -1,5 +1,8 @@
 # LunaBot
 
+This `lunabot-new` copy retains CN uploaded Suite/MySekai features and shared static queries, without live game API access.
+See [SEKAI_REWRITE.md](SEKAI_REWRITE.md) for scope, configuration changes and validation limits.
+
 A multi-functional chatbot based on Nonebot2
 
 Note: This project is for reference and learning purposes only, and is **not** a completely deployable application.

@@ -2,8 +2,25 @@ default_masterdata_update_check_timeout: 3    # 默认MasterData数据源检查�
 default_masterdata_download_timeout: 10       # 默认MasterData下载超时时间（秒）
 default_rip_asset_download_timeout: 5         # 默认解包资源下载超时时间（秒）
 rip_img_cache_max_res: 256*256                # 解包资源图片缓存最大分辨率
+image_cache_max_bytes: 67108864              # 静态图片与解包图片共用的进程内LRU预算（64MiB，0禁用）
+
+# 国服：MasterData 只能填写国服镜像；图片按 sources 顺序回退到日服。
+# 下列 xxx 均为占位符；已有生产配置可以保留其国服源和日服资源回退顺序。
+cn:
+  masterdata:
+    sources:
+      - name: "cn-master"
+        base_url: "https://raw.githubusercontent.com/xxx/xxx-sekai-sc-master/refs/heads/main/master/"
+        version_url: "https://raw.githubusercontent.com/xxx/xxx-sekai-sc-master/refs/heads/main/versions/current_version.json"
+  rip:
+    sources:
+      - name: "cn-assets"
+        base_url: "https://xxx/cn-assets/"
+      - name: "jp-assets-fallback"
+        base_url: "https://xxx/jp-assets/"
 
 # 日服
+# 仅供共用角色图标等内部资源使用，不开放日服用户命令。
 jp:
   masterdata:
     sources:

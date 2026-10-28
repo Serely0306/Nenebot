@@ -1,5 +1,6 @@
 from ..utils import *
 from .common import *
+from .feature_policy import is_capture_command, make_unsupported_reply
 from .asset import (
     RegionMasterDataCollection, 
     RegionRipAssetManger,
@@ -9,13 +10,35 @@ from .asset import (
 HELP_DOC_PATH = "helps/sekai.md"
 
 
+async def reject_unsupported_command(ctx: HandlerContext):
+    original_text = None
+    if ctx.bot is not None and ctx.message_id is not None:
+        try:
+            # OneBotFilter rewrites both event.message and event.raw_message.
+            message = await asyncio.wait_for(ctx.bot.get_msg(message_id=ctx.message_id), timeout=2)
+            original_text = message.get('raw_message')
+            if not original_text:
+                content = message.get('message')
+                if isinstance(content, str):
+                    original_text = content
+                elif isinstance(content, list):
+                    original_text = ''.join(
+                        segment.get('data', {}).get('text', '')
+                        for segment in content if segment.get('type') == 'text'
+                    )
+        except Exception:
+            pass
+    raise ReplyException(make_unsupported_reply(original_text, ctx.trigger_cmd, ctx.get_args()))
+
+
 def get_user_default_region(user_id: int, fallback: str) -> str:
     """
     获取用户不填指令区服时的默认区服
     """
     user_id = str(user_id)
     default_regions = file_db.get("default_region", {})
-    return default_regions.get(user_id, fallback)
+    region = default_regions.get(user_id, fallback)
+    return region if region in USER_SERVER_REGIONS else fallback
 
 def set_user_default_region(user_id: int, region: str):
     """
@@ -55,7 +78,7 @@ class SekaiHandlerContext(HandlerContext):
 
 
 class SekaiCmdHandler(CmdHandler):
-    DEFAULT_AVAILABLE_REGIONS = ALL_SERVER_REGIONS
+    DEFAULT_AVAILABLE_REGIONS = USER_SERVER_REGIONS
 
     def __init__(
         self, 
@@ -63,9 +86,12 @@ class SekaiCmdHandler(CmdHandler):
         regions: List[str] = None, 
         prefix_args: List[str] = None,
         parse_uid_arg: bool = True,
+        capture_only: bool = None,
         **kwargs
     ):
-        self.available_regions = regions or self.DEFAULT_AVAILABLE_REGIONS
+        requested_regions = self.DEFAULT_AVAILABLE_REGIONS if regions is None else regions
+        self.available_regions = [region for region in requested_regions if region in USER_SERVER_REGIONS]
+        self.capture_only = is_capture_command(commands) if capture_only is None else capture_only
         self.prefix_args = sorted(prefix_args or [''], key=lambda x: len(x), reverse=True)
         all_region_commands = []
         for prefix in self.prefix_args:
@@ -81,6 +107,9 @@ class SekaiCmdHandler(CmdHandler):
         super().__init__(all_region_commands, logger, **kwargs)
 
     async def additional_context_process(self, context: HandlerContext):
+        if not self.capture_only or not self.available_regions:
+            await reject_unsupported_command(context)
+
         # 处理指令区服前缀
         with ProfileTimer("sekaihandler.parse_prefix"):
             cmd_region = None
@@ -90,6 +119,9 @@ class SekaiCmdHandler(CmdHandler):
                     cmd_region = region
                     context.trigger_cmd = context.trigger_cmd.replace(f"/{region}", "/")
                     break
+
+            if cmd_region and cmd_region not in USER_SERVER_REGIONS:
+                await reject_unsupported_command(context)
             
             # 处理前缀参数
             prefix_arg = None
@@ -159,7 +191,7 @@ async def _(ctx: HandlerContext):
 
     SET_HELP = f"""
 ---
-使用\"{ctx.trigger_cmd} 区服英文缩写\"设置默认区服，可用的区服有: {', '.join(ALL_SERVER_REGIONS)}
+当前仅支持国服，使用\"{ctx.trigger_cmd} cn\"设置默认区服。
 """.strip()
 
     if not args:
@@ -167,7 +199,7 @@ async def _(ctx: HandlerContext):
         if not region:
             return await ctx.asend_reply_msg(f"""
 你还没有设置默认区服。
-不加区服前缀发送指令时，会自动选用指令的默认区服(大部分为jp)
+不加区服前缀发送指令时，使用国服。
 {SET_HELP}
 """.strip())
         
@@ -177,10 +209,8 @@ async def _(ctx: HandlerContext):
 {SET_HELP}
 """.strip())
         
-    assert_and_reply(args in ALL_SERVER_REGIONS, f"""
-无效的区服参数: {args}
-{SET_HELP}
-""".strip())
+    if args not in USER_SERVER_REGIONS:
+        await reject_unsupported_command(ctx)
     set_user_default_region(ctx.user_id, args)
 
     return await ctx.asend_reply_msg(f"""

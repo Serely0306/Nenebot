@@ -1,3 +1,4 @@
+import base64
 import re
 
 from ...utils import *
@@ -8,6 +9,7 @@ from ..asset import *
 from ..draw import *
 from ..sub import SekaiUserSubHelper, SekaiGroupSubHelper
 from ..gameapi import get_gameapi_config, request_gameapi
+from ..offline_profile import build_upload_data_url
 from .profile import (
     get_player_bind_id, 
     get_player_bind_count,
@@ -30,8 +32,7 @@ from .card import get_character_sd_image
 from ...imgtool import shrink_image
 
 
-#MYSEKAI_REGIONS = ['jp', 'tw', 'cn', 'kr', 'en']
-MYSEKAI_REGIONS = ['jp', 'cn']
+MYSEKAI_REGIONS = ['cn']
 #BD_MYSEKAI_REGIONS = ['cn', 'tw', 'kr']
 BD_MYSEKAI_REGIONS = ['cn']
 
@@ -88,7 +89,15 @@ SITE_ID_ORDER = (
     5, 7, 6, 8,
 )
 
-MSR_PUSH_CONCURRENCY_CFG = config.item('mysekai.msr_push_concurrency')
+def _mysekai_concurrency(key):
+    try:
+        return max(1, int(config.get(f'mysekai.{key}', 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
+# One budget covers commands and both ordinary and birthday push tasks.
+_mysekai_render_semaphore = asyncio.Semaphore(_mysekai_concurrency('render_concurrency'))
 
 bd_msr_bind_db = get_file_db(f"{SEKAI_PROFILE_DIR}/bd_msr_bind.json", logger)
 
@@ -135,7 +144,7 @@ async def get_mysekai_info(
     try:
         # 获取绑定的玩家id
         try:
-            uid = get_player_bind_id(ctx)
+            uid = get_player_bind_id(ctx, qid=qid if qid != ctx.user_id else None)
         except Exception as e:
             logger.info(f"获取 {qid} {ctx.region} mysekai抓包数据失败: 未绑定游戏账号")
             raise e
@@ -150,9 +159,7 @@ async def get_mysekai_info(
 
         # 尝试下载
         try:
-            url = url.format(uid=uid) + f"?mode={mode}"
-            if filter:
-                url += f"&filter={','.join(filter)}"
+            url = build_upload_data_url(url, uid, mode, filter)
             mysekai_info = await request_gameapi(url)
         except HttpError as e:
             logger.info(f"获取 {qid} {ctx.region} mysekai抓包数据失败: {get_exc_desc(e)}")
@@ -758,6 +765,11 @@ async def compose_mysekai_harvest_map_image(
 
 # 合成mysekai资源图片 返回图片列表
 async def compose_mysekai_res_image(ctx: SekaiHandlerContext, qid: int, show_harvested: bool, check_time: bool, mysekai_info_override: dict = None) -> List[Image.Image]:
+    async with _mysekai_render_semaphore:
+        return await _compose_mysekai_res_image(ctx, qid, show_harvested, check_time, mysekai_info_override)
+
+
+async def _compose_mysekai_res_image(ctx: SekaiHandlerContext, qid: int, show_harvested: bool, check_time: bool, mysekai_info_override: dict = None) -> List[Image.Image]:
     with ProfileTimer("msr.get_basic_profile"):
         uid = get_player_bind_id(ctx)
 
@@ -910,18 +922,24 @@ async def compose_mysekai_res_image(ctx: SekaiHandlerContext, qid: int, show_har
 
     # 绘制资源位置图
     with ProfileTimer("msr.compose_harvest_map"):
+        site_harvest_maps = []
         for i in range(len(site_res_num)):
             site_id, res_num = site_res_num[i]
             site_harvest_map = find_by(harvest_maps, "mysekaiSiteId", site_id)
             if site_harvest_map:
-                site_harvest_map_imgs.append(compose_mysekai_harvest_map_image(
-                    ctx,
-                    site_harvest_map,
-                    show_harvested,
-                    phenom_color_info,
-                    mysekai_info,
-                ))
-        site_harvest_map_imgs = await asyncio.gather(*site_harvest_map_imgs)
+                site_harvest_maps.append(site_harvest_map)
+        site_batch_size = _mysekai_concurrency('site_render_concurrency')
+        for start in range(0, len(site_harvest_maps), site_batch_size):
+            pending = [asyncio.create_task(compose_mysekai_harvest_map_image(
+                ctx, site_map, show_harvested, phenom_color_info, mysekai_info,
+            )) for site_map in site_harvest_maps[start:start + site_batch_size]]
+            try:
+                site_harvest_map_imgs.extend(await asyncio.gather(*pending))
+            except BaseException:
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+                raise
    
     try: 
         phenom_bg_img = ctx.static_imgs.get(f"mysekai/phenom_bg/{cur_phenom_id}.png")
@@ -1237,16 +1255,18 @@ async def get_mysekai_photo_and_time(ctx: SekaiHandlerContext, qid: int, seq: in
     photos = mysekai_info['updatedResources']['userMysekaiPhotos']
     if seq < 0:
         seq = len(photos) + seq + 1
-    assert_and_reply(seq <= len(photos), f"照片编号大于照片数量({len(photos)})")
+    assert_and_reply(1 <= seq <= len(photos), f"照片编号超出照片数量({len(photos)})")
     
     photo = photos[seq-1]
     photo_time = datetime.fromtimestamp(photo['obtainedAt'] / 1000)
 
-    url = get_gameapi_config(ctx).mysekai_photo_api_url
-    assert_and_reply(url, f"暂不支持查询 {ctx.region} 的MySekai照片")
-
-    image_bytes = await request_gameapi(url, data_type='bytes', json=photo)
-    return Image.open(io.BytesIO(image_bytes)), photo_time
+    thumbnail = photo.get('thumbnail')
+    assert_and_reply(thumbnail,
+                     "当前MySekai抓包仅含照片索引，没有图片内容。实时游戏API已停用，暂时无法读取照片。")
+    image_bytes = base64.b64decode(thumbnail, validate=True)
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        image.load()
+        return image.copy(), photo_time
 
 # 从本地的my.sekai.run网页html提取数据
 async def load_mysekairun_data(ctx: SekaiHandlerContext):
@@ -2294,13 +2314,13 @@ pjsk_check_mysekai_data.check_cdrate(cd).check_wblist(gbl)
 async def _(ctx: SekaiHandlerContext):
     cqs = extract_cq_code(ctx.get_msg())
     qid = int(cqs['at'][0]['qq']) if 'at' in cqs else ctx.user_id
-    uid = get_player_bind_id(ctx)
+    uid = get_player_bind_id(ctx, qid=qid if qid != ctx.user_id else None)
 
     task1 = get_mysekai_info(ctx, qid, raise_exc=False, mode="local", filter=['upload_time'])
     task2 = get_mysekai_info(ctx, qid, raise_exc=False, mode="haruki", filter=['upload_time'])
     (local_profile, local_err), (haruki_profile, haruki_err) = await asyncio.gather(task1, task2)
 
-    msg = f"{process_hide_uid(ctx, uid, keep=6)}({ctx.region.upper()}) Mysekai数据\n"
+    msg = f"{process_hide_uid(ctx, uid, keep=6, qid=qid)}({ctx.region.upper()}) Mysekai数据\n"
 
     if local_err:
         local_err = local_err[local_err.find(']')+1:].strip()
@@ -2417,7 +2437,7 @@ async def _(ctx: SekaiHandlerContext):
 # MSR自动推送 & MSR订阅更新
 @repeat_with_interval(config.item('mysekai.msr_push_interval_seconds'), 'MSR自动推送', logger)
 async def msr_auto_push():
-    for region in ALL_SERVER_REGIONS:
+    for region in USER_SERVER_REGIONS:
         region_name = get_region_name(region)
         ctx = SekaiHandlerContext.from_region(region)
 
@@ -2587,8 +2607,8 @@ async def msr_auto_push():
                 logger.print_exc(f"生日刷新MSR推送失败: {qid}")
                 return (uid, event.get("sequence"), False)
 
-        await batch_gather(*[push(task) for task in tasks], batch_size=MSR_PUSH_CONCURRENCY_CFG.get())
-        birthday_results = await batch_gather(*[push_birthday(task) for task in birthday_tasks], batch_size=MSR_PUSH_CONCURRENCY_CFG.get())
+        await batch_gather(*[push(task) for task in tasks], batch_size=_mysekai_concurrency('msr_push_concurrency'))
+        birthday_results = await batch_gather(*[push_birthday(task) for task in birthday_tasks], batch_size=_mysekai_concurrency('msr_push_concurrency'))
         event_tasks = {}
         for task in birthday_tasks:
             event_tasks.setdefault((str(task[2]), task[3].get("sequence")), 0)

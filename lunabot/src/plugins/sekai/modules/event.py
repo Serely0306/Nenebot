@@ -94,7 +94,6 @@ def get_left_transparent_width(img: Image.Image) -> int:
 
 # 判断某个卡牌id的限定类型
 async def get_card_supply_type(ctx: SekaiHandlerContext, cid: int) -> str:
-    ctx = SekaiHandlerContext.from_region("jp")
     card = await ctx.md.cards.find_by_id(cid)
     if not card or 'cardSupplyId' not in card:
         return "normal"

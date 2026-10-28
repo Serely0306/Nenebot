@@ -43,6 +43,8 @@ _character_nickname_data = CharacterNicknameData()
 # }
 ALL_SERVER_REGIONS = ['jp','cn']
 ALL_SERVER_REGION_NAMES = ['日服', '国服']
+# JP remains available to internal asset helpers, never to user data or jobs.
+USER_SERVER_REGIONS = ['cn']
 NEED_TRANSLATE_REGIONS = ['jp']
 TRANSLATED_REGIONS = ['cn']
 

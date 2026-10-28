@@ -4,7 +4,7 @@ from ..handler import *
 from ..asset import *
 from ..draw import *
 from .event import get_event_banner_img, get_current_event
-from .sk import get_wl_events
+from .event import get_wl_events
 from .profile import (
     get_player_bind_id,
     get_basic_profile,
@@ -226,7 +226,7 @@ async def extract_target_event(
     raise_if_not_found: bool,
 ) -> Tuple[Optional[dict], Optional[int], str]:
     event_ctx = ctx
-    fallback_ctx = SekaiHandlerContext.from_region("jp") if ctx.region != "jp" else None
+    fallback_ctx = None
 
     def assert_and_reply_or_return(condition: bool, msg: str):
         if raise_if_not_found:
@@ -779,7 +779,6 @@ async def extract_music_and_diff(
     live_type: str, 
     additional_args: dict,
 ) -> str:
-    jp_ctx = SekaiHandlerContext.from_region('jp')
     search_options = MusicSearchOptions(
         use_emb=False,
         use_id=True,
@@ -795,7 +794,7 @@ async def extract_music_and_diff(
         for seg in segs:
             music_diff, seg = extract_diff(seg, default='master')
             search_options.diff = music_diff
-            music = (await search_music(jp_ctx, seg, search_options)).music
+            music = (await search_music(ctx, seg, search_options)).music
             assert_and_reply(music, f"在组卡支持的所有歌曲中找不到\"{seg}\"")
             additional_args['music_diffs_to_compare'].append((music['id'], music_diff, seg))
         return ""
@@ -805,7 +804,7 @@ async def extract_music_and_diff(
     args = args.strip()
     if args:
         search_options.diff = options.music_diff
-        music = (await search_music(jp_ctx, args, search_options)).music
+        music = (await search_music(ctx, args, search_options)).music
         err_msg = f"在组卡支持的所有歌曲中找不到\"{args}\""
         if len(args.split()) > 1:
             err_msg += "，如果你要对多首歌曲进行比较，请加上\"歌曲比较\""
@@ -1796,45 +1795,18 @@ async def compose_deck_recommend_image(
 
     # ---------------------------- 调用组卡服务 ---------------------------- #
 
-    jp_ctx = SekaiHandlerContext.from_region('jp')
     event_ctx = ctx
     resolved_event = None
     recommend_region = ctx.region
-    if ctx.region != "jp" and options.fixed_cards:
-        missing_fixed_cards = []
-        for cid in options.fixed_cards:
-            if not await ctx.md.cards.find_by_id(cid):
-                missing_fixed_cards.append(cid)
-        if missing_fixed_cards:
-            for cid in missing_fixed_cards:
-                if await jp_ctx.md.cards.find_by_id(cid):
-                    recommend_region = "jp"
-                    logger.info(f"固定卡牌 {cid} 在 {ctx.region} 不存在，组卡回退到 JP masterdata")
-                    break
-
     if options.event_id:
-        primary_ctx = jp_ctx if recommend_region == "jp" else ctx
-        secondary_ctx = None
-        if recommend_region == "jp":
-            secondary_ctx = ctx
-        elif ctx.region != "jp":
-            secondary_ctx = jp_ctx
-
-        resolved_event = await primary_ctx.md.events.find_by_id(options.event_id)
-        event_ctx = primary_ctx
-        if not resolved_event and secondary_ctx:
-            fallback_event = await secondary_ctx.md.events.find_by_id(options.event_id)
-            if fallback_event:
-                resolved_event = fallback_event
-                event_ctx = secondary_ctx
-                recommend_region = secondary_ctx.region
+        resolved_event = await ctx.md.events.find_by_id(options.event_id)
 
     options.region = recommend_region
     log_options(ctx, uid, options)
 
     # 准备用户数据
     if profile.get('userHonors'):
-        recommend_ctx = ctx if recommend_region == ctx.region else jp_ctx
+        recommend_ctx = ctx
         honor_ids = {honor['id'] for honor in await recommend_ctx.md.honors.get()}
         profile['userHonors'] = [
             honor for honor in profile['userHonors']
@@ -1900,10 +1872,10 @@ async def compose_deck_recommend_image(
             music_title = "おまかせ（所有歌曲平均）"
             music_cover = ctx.static_imgs.get('omakase.png')
         else:
-            music = await jp_ctx.md.musics.find_by_id(options.music_id)
+            music = await ctx.md.musics.find_by_id(options.music_id)
             music_title = truncate(music['title'], 20)
             music_title += f" ({options.music_diff.upper()})"
-            music_cover = await get_music_cover_thumb(jp_ctx, options.music_id)
+            music_cover = await get_music_cover_thumb(ctx, options.music_id)
 
     war_prepare_info = None
     if war_prepare and result_decks:
@@ -1979,7 +1951,7 @@ async def compose_deck_recommend_image(
     if recommend_type == "unit_attr" and options.event_type == "cheerful_carnival":
         live_name = "5v5"
         
-    recommend_ctx = ctx if recommend_region == ctx.region else jp_ctx
+    recommend_ctx = ctx
 
     # 获取挑战角色名字和头像
     chara_name = None
@@ -2315,12 +2287,12 @@ async def compose_deck_recommend_image(
                                     TextBox("歌曲", th_style2).set_h(gh // 2).set_content_align('c')
                                     Spacer(h=6)
                                     for (mid, diff, marg), deck in zip(music_diffs_to_compare, result_decks):
-                                        music = await jp_ctx.md.musics.find_by_id(mid)
+                                        music = await ctx.md.musics.find_by_id(mid)
                                         music_title = music['title'] + f" ({diff.upper()})"
                                         with VSplit().set_content_align('c').set_item_align('c').set_sep(8).set_padding(0).set_h(gh):
                                             with Frame().set_content_align('c'):
                                                 Spacer(w=64, h=64).set_bg(FillBg(fill=DIFF_COLORS[diff])).set_offset((3, 3))
-                                                ImageBox(await get_music_cover_thumb(jp_ctx, mid), size=(64, 64)).set_offset((-3, -3))
+                                                ImageBox(await get_music_cover_thumb(ctx, mid), size=(64, 64)).set_offset((-3, -3))
                                             text = f"{mid}"
                                             if marg: text = f"{truncate(marg, 8)} → " + text
                                             TextBox(text, TextStyle(font=DEFAULT_FONT, size=15, color=(75, 75, 75)))
@@ -2576,9 +2548,9 @@ async def _(ctx: SekaiHandlerContext):
 
 
 # 实效计算
-pjsk_score_up = CmdHandler([
+pjsk_score_up = SekaiCmdHandler([
     "/实效", "/倍率", "/时效", "/pjsk score up",
-], logger)
+])
 pjsk_score_up.check_cdrate(cd).check_wblist(gbl)
 @pjsk_score_up.handle()
 async def _(ctx: SekaiHandlerContext):
@@ -2599,7 +2571,7 @@ DECKREC_DATA_UPDATE_INTERVAL_CFG = config.item('deck.data_update_interval_second
 
 @repeat_with_interval(DECKREC_DATA_UPDATE_INTERVAL_CFG, "组卡数据更新", logger)
 async def deckrec_update_data():
-    for region in ALL_SERVER_REGIONS:
+    for region in USER_SERVER_REGIONS:
         try:
             ctx = SekaiHandlerContext.from_region(region)
 

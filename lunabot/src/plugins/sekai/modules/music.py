@@ -18,7 +18,6 @@ from .profile import (
 from .event import extract_ban_event
 from .resbox import get_res_icon
 import rapidfuzz
-import pandas as pd
 
 
 music_group_sub = SekaiGroupSubHelper("music", "新曲通知", ALL_SERVER_REGIONS)
@@ -845,7 +844,8 @@ async def search_music(ctx: SekaiHandlerContext, query: str, options: MusicSearc
 _music_constants: dict[tuple[int, str], float] = {}
 _music_constants_mtime: int = None
 
-def read_csv_robust(csv_path: str) -> pd.DataFrame:
+def read_csv_robust(csv_path: str):
+    import pandas as pd
     # 常见：带 BOM 的 utf-8-sig、Windows 中文 cp936/gbk
     encodings = ["utf-8-sig", "utf-8", "cp936", "gbk", "gb18030", "latin1"]
     last_err = None
@@ -2507,10 +2507,10 @@ async def _(ctx: SekaiHandlerContext):
 
 
 # 同步歌曲别名
-pjsk_sync_music_alias = CmdHandler([
+pjsk_sync_music_alias = SekaiCmdHandler([
     "/sync music alias", "/sma",
     "/同步歌曲别名", 
-], logger)
+])
 pjsk_sync_music_alias.check_cdrate(cd).check_wblist(gbl).check_superuser()
 @pjsk_sync_music_alias.handle()
 async def _(ctx: HandlerContext):
@@ -2635,7 +2635,6 @@ async def _(ctx: SekaiHandlerContext):
 # ======================= 定时任务 ======================= #
 
 # 新曲上线提醒
-@repeat_with_interval(60, '新曲上线提醒', logger)
 async def new_music_notify():
     notified_musics = file_db.get("notified_new_musics", {})
     updated = False
@@ -2718,7 +2717,6 @@ async def new_music_notify():
 
 
 # 新APD上线提醒
-@repeat_with_interval(60, '新APD上线提醒', logger)
 async def new_apd_notify():
     no_apd_musics = file_db.get("no_apd_musics", {})
     notified_new_apd = file_db.get("notified_new_apd", {})
@@ -2790,11 +2788,3 @@ async def new_apd_notify():
     if updated:
         file_db.set("no_apd_musics", no_apd_musics)
         file_db.set("notified_new_apd", notified_new_apd)
-
-
-# 自动同步歌曲别名
-for hour, minute, second in SyncMusicAliasConfig.get().sync_times:
-    @scheduler.scheduled_job("cron", hour=hour, minute=minute, second=second)
-    async def cron_statistic():
-        logger.info("触发歌曲别名自动同步")
-        await sync_music_alias()

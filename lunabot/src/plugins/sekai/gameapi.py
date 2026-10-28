@@ -24,7 +24,15 @@ class GameApiConfig:
 
 # 获取游戏api相关配置
 def get_gameapi_config(ctx: SekaiHandlerContext) -> GameApiConfig:
-    return GameApiConfig(**(gameapi_config.get(ctx.region, {})))
+    if ctx.region not in USER_SERVER_REGIONS:
+        return GameApiConfig()
+    configured = gameapi_config.get(ctx.region, {})
+    # These endpoints read uploaded snapshots or maintain local subscriptions.
+    upload_fields = (
+        'suite_api_url', 'mysekai_api_url', 'mysekai_upload_time_api_url',
+        'mysekai_birthday_events_api_url', 'update_msr_sub_api_url',
+    )
+    return GameApiConfig(**{key: configured.get(key) for key in upload_fields})
 
 
 # 请求游戏API data_type: json/bytes/None
@@ -35,6 +43,7 @@ async def request_gameapi(url: str, method: str = 'GET', data_type: str | None =
     try:
         async with get_client_session().request(method, url, headers=headers, verify_ssl=False, **kwargs) as resp:
             if resp.status != 200:
+                detail = f'HTTP {resp.status}'
                 try:
                     detail = await resp.text()
                     detail = loads_json(detail)['detail']

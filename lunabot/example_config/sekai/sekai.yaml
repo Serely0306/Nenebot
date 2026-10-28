@@ -141,7 +141,9 @@ gacha:
 
 mysekai:
   msr_push_interval_seconds: 3
-  msr_push_concurrency: 4
+  msr_push_concurrency: 1       # 普通/生日推送的并发任务数
+  render_concurrency: 1         # 手动查询和推送共用的MSR绘图并发上限，修改后重启生效
+  site_render_concurrency: 1    # 单次MSR中的地图绘图并发上限
 
   map_image_scale: 0.75
   map_brightness: 1.0

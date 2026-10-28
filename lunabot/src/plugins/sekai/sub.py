@@ -31,23 +31,25 @@ class SekaiGroupSubHelper:
     def __init__(self, id: str, name: str, regions: List[str], hide: bool = False):
         self.id = id
         self.name = name
-        self.regions = regions
+        self.regions = [region for region in regions if region in USER_SERVER_REGIONS] if id == 'msr' else []
         self.hide = hide
         self.subs = {
             region: SubHelper(
-                f"{name}({region_name})_群聊",
+                # Preserve the existing CN group-permission storage key.
+                f"{name}({'日服' if id == 'msr' and region == 'cn' else get_region_name(region)})_群聊",
                 file_db,
                 logger,
                 key_fn=lambda gid: str(gid),
                 val_fn=lambda x: int(x)
-            ) for region, region_name in zip(regions, ALL_SERVER_REGION_NAMES)
+            ) for region in self.regions
         }
         self._register_handlers()
-        SekaiGroupSubHelper.all_subs.append(self)
+        if self.regions:
+            SekaiGroupSubHelper.all_subs.append(self)
 
     def _register_handlers(self):
         sub_commands = [cmd.format(id=self.id) for cmd in GROUP_SUB_COMMANDS]
-        sub = SekaiCmdHandler(sub_commands, regions=self.regions, priority=1, help_command='/pjsk订阅')
+        sub = SekaiCmdHandler(sub_commands, regions=self.regions, priority=1, help_command='/pjsk订阅', capture_only=self.id == 'msr')
         sub.check_cdrate(cd).check_wblist(gbl).check_superuser()
         @sub.handle()
         async def _(ctx: SekaiHandlerContext):
@@ -55,7 +57,7 @@ class SekaiGroupSubHelper:
             return await ctx.asend_reply_msg(f"开启本群 {self.name}({get_region_name(ctx.region)})")
         
         unsub_commands = [cmd.format(id=self.id) for cmd in GROUP_UNSUB_COMMANDS]
-        unsub = SekaiCmdHandler(unsub_commands, regions=self.regions, priority=1, help_command='/pjsk取消订阅')
+        unsub = SekaiCmdHandler(unsub_commands, regions=self.regions, priority=1, help_command='/pjsk取消订阅', capture_only=self.id == 'msr')
         unsub.check_cdrate(cd).check_wblist(gbl).check_superuser()
         @unsub.handle()
         async def _(ctx: SekaiHandlerContext):
@@ -155,25 +157,26 @@ class SekaiUserSubHelper:
     def __init__(self, id: str, name: str, regions: List[str], related_group_sub: SekaiGroupSubHelper = None, only_one_group=False, hide=False):
         self.id = id
         self.name = name
-        self.regions = regions
+        self.regions = [region for region in regions if region in USER_SERVER_REGIONS] if id == 'msr' else []
         self.related_group_sub = related_group_sub
         self.hide = hide
         self.subs = {
             region: SubHelper(
-                f"{name}({region_name})_用户",
+                f"{name}({get_region_name(region)})_用户",
                 file_db,
                 logger,
                 key_fn=lambda uid, gid: f"{uid}@{gid}", 
                 val_fn=lambda x: [int(v) if v != 'None' else None for v in x.split("@")]
-            ) for region, region_name in zip(regions, ALL_SERVER_REGION_NAMES)
+            ) for region in self.regions
         }
         self.only_one_group = only_one_group
         self._register_handlers()
-        SekaiUserSubHelper.all_subs.append(self)
+        if self.regions:
+            SekaiUserSubHelper.all_subs.append(self)
 
     def _register_handlers(self):
         sub_commands = [cmd.format(id=self.id) for cmd in USER_SUB_COMMANDS]
-        sub = SekaiCmdHandler(sub_commands, regions=self.regions, priority=1)
+        sub = SekaiCmdHandler(sub_commands, regions=self.regions, priority=1, capture_only=self.id == 'msr')
         sub.check_cdrate(cd).check_wblist(gbl)
         @sub.handle()
         async def _(ctx: SekaiHandlerContext):
@@ -195,7 +198,7 @@ class SekaiUserSubHelper:
             return await ctx.asend_reply_msg(msg.strip())
         
         unsub_commands = [cmd.format(id=self.id) for cmd in USER_UNSUB_COMMANDS]
-        unsub = SekaiCmdHandler(unsub_commands, regions=self.regions, priority=1)
+        unsub = SekaiCmdHandler(unsub_commands, regions=self.regions, priority=1, capture_only=self.id == 'msr')
         unsub.check_cdrate(cd).check_wblist(gbl)
         @unsub.handle()
         async def _(ctx: SekaiHandlerContext):
@@ -235,7 +238,7 @@ class SekaiUserSubHelper:
 user_sub_list = SekaiCmdHandler([
     "/pjsk_sub_list", "/pjsk sub list", "/pjsk_subs", "/pjsk subs",
     "/pjsk订阅", "/pjsk 订阅", "/pjsk用户订阅", "/pjsk 用户订阅",
-], priority=1)
+], priority=1, capture_only=True)
 user_sub_list.check_cdrate(cd).check_wblist(gbl)
 @user_sub_list.handle()
 async def _(ctx: HandlerContext):
@@ -244,7 +247,6 @@ async def _(ctx: HandlerContext):
     has_sub = False
     for sub in SekaiUserSubHelper.all_subs:
         sub_regions = []
-        print(sub.regions)
         for region in sub.regions:
             if sub.is_subbed(region, ctx.user_id, ctx.group_id):
                 # 标记对应群聊功能未开启的订阅
@@ -270,6 +272,6 @@ async def _(ctx: HandlerContext):
             msg += f"{sub.id}: {sub.name}({', '.join(sub.regions)})\n"
 
     msg += "---\n"
-    msg += "使用\"/pjsk订阅 项目\"订阅，例如发送\"/cnpjsk订阅 live\"订阅国服live提醒"
+    msg += "使用\"/pjsk订阅 msr\"订阅国服MySekai资源和生日刷新推送"
         
     return await ctx.asend_reply_msg(msg.strip())

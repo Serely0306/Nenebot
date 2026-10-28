@@ -943,7 +943,6 @@ async def get_character_mission_master_overview_image_path(
     return cache_path
 
 
-@RegionMasterDbManager.on_update()
 async def refresh_character_mission_master_overview_on_masterdb_update(
     region: str, source: str,
     version: str, last_version: str,

@@ -1,25 +1,9 @@
-# 日服
-jp:
-  profile_api_url:                "https://xxx/api/jp/user/{uid}/profile"       # 游戏API: 获取用户profile
-  suite_api_url:                  "https://xxx/api/jp/user/{uid}/suite"         # 游戏API: 获取用户suite
-  mysekai_api_url:                "https://xxx/api/jp/user/{uid}/mysekai"       # 游戏API: 获取用户mysekai
-  mysekai_photo_api_url:          "https://xxx/api/jp/mysekai/photo"            # 游戏API: 获取用户ms照片
-  ranking_api_url:                "https://xxx/api/jp/event/{event_id}/ranking" # 游戏API: 获取活动排名
-  send_boost_api_url:             "https://xxx/api/jp/user/{uid}/send_boost"    # 游戏API: 送火
-  create_account_api_url:         "https://xxx/api/jp/create_account"           # 游戏API: 创建账号
-  
-  # suite和mysekai数据需要包含upload_time字段，内容为单位为秒的时间戳
-  # 目前使用到的suite数据字段：'userCards','userDecks','userGamedata','userMusics','userMusicResults','userMysekaiMaterials','userAreas','userChallengeLiveSoloDecks','userCharacters','userMysekaiCanvases','userMysekaiFixtureGameCharacterPerformanceBonuses','userMysekaiGates','userWorldBloomSupportDecks','userHonors','userMysekaiCharacterTalks','userChallengeLiveSoloResults','userChallengeLiveSoloStages','userChallengeLiveSoloHighScoreRewards','userEvents','userWorldBlooms','userMusicAchievements','userPlayerFrames','userMaterials','upload_time',
-  # 字节服suite数据中的compact格式字段需要处理为日服同格式
-
-# 台服（繁中）
-tw:
-  # ...
-
-# 国服
+# Only CN uploaded snapshots; no game-login/profile/ranking endpoints are used.
+# Nenebot_tools normalizes compact fields before storing the snapshots.
+# upload_time is a Unix timestamp in milliseconds.
 cn:
-  wish_ranking_api_url:           "http://127.0.0.1:9999/api/cn/activity/wish-ranking/top-ladder" # 游戏API: 获取心愿榜前500与榜线
-  # 以下接口由 Nenebot_tools 提供；生日刷新事件使用独立游标持续推送
-  # mysekai_upload_time_api_url:  "http://127.0.0.1:9999/api/mysekai/cn/upload_times"
-  # mysekai_birthday_events_api_url: "http://127.0.0.1:9999/api/mysekai/cn/birthday_events"
-  # update_msr_sub_api_url:       "http://127.0.0.1:9999/api/mysekai/cn/msr_sub"
+  suite_api_url: "http://127.0.0.1:5000/api/suite/cn/{uid}"
+  mysekai_api_url: "http://127.0.0.1:5000/api/mysekai/cn/{uid}"
+  mysekai_upload_time_api_url: "http://127.0.0.1:5000/api/mysekai/cn/upload_times"
+  mysekai_birthday_events_api_url: "http://127.0.0.1:5000/api/mysekai/cn/birthday_events"
+  update_msr_sub_api_url: "http://127.0.0.1:5000/api/mysekai/cn/msr_sub"

@@ -1,16 +1,14 @@
 import asyncio
 from ...utils import *
-from ...record import after_record_hook
 from ..common import *
 from ..handler import *
 from ..asset import *
 from ..draw import *
 from ..sub import SekaiGroupSubHelper, SekaiUserSubHelper
-from .card_extractor import CardExtractor, CardExtractResult, CardThumbnail
 from ..gameapi import get_gameapi_config, request_gameapi
+from ..offline_profile import build_basic_profile_from_suite
 from .profile import (
     get_card_full_thumbnail, 
-    get_basic_profile,
     build_profile_play_section,
     get_detailed_profile,
     get_detailed_profile_card,
@@ -140,7 +138,7 @@ async def _(ctx: SekaiHandlerContext):
     return await ctx.asend_fold_msg_adaptive(text.strip(), threshold=3, need_reply=False)
 
 
-card_extractor = CardExtractor()
+card_extractor = None
 extract_card = SekaiCmdHandler([
     "/提取卡牌"
 ], regions=['jp'])
@@ -468,22 +466,8 @@ async def get_pjsk_detail_material_items(ctx: SekaiHandlerContext, profile: dict
     return result
 
 def build_pjsk_detail_basic_profile(profile: dict) -> dict:
-    # 基础 profile 接口不可用时，用 suite 中已有字段回填最小资料结构。
-    user_gamedata = profile.get('userGamedata', {})
-    deck_id = user_gamedata.get('deck')
-    return {
-        'user': {
-            'userId': user_gamedata.get('userId', 0),
-            'name': user_gamedata.get('name', '?'),
-            'rank': user_gamedata.get('rank', 0),
-        },
-        'userDeck': find_by(profile.get('userDecks', []), 'deckId', deck_id) or {},
-        'userCards': profile.get('userCards', []),
-        'userProfile': profile.get('userProfile', {}),
-        'userProfileHonors': profile.get('userProfileHonors', []),
-        # 打歌统计仍按原本 profile 接口逻辑获取，这里不从 suite 回填。
-        'userMusicDifficultyClearCount': [],
-    }
+    uid = profile['userGamedata']['userId']
+    return build_basic_profile_from_suite(profile, uid)
 
 async def build_pjsk_detail_value_panel(
     ctx: SekaiHandlerContext,
@@ -685,15 +669,11 @@ async def compose_pjsk_detail_image(ctx: SekaiHandlerContext, qid: int) -> Image
             'userCharacterMissionV2Statuses',
             'userProfile',
             'userProfileHonors',
+            'userMusicResults',
         ),
         raise_exc=True,
     )
-    try:
-        basic_profile = await get_basic_profile(ctx, profile['userGamedata']['userId'], raise_when_no_found=False)
-    except Exception:
-        basic_profile = {}
-    if not basic_profile:
-        basic_profile = build_pjsk_detail_basic_profile(profile)
+    basic_profile = build_pjsk_detail_basic_profile(profile)
 
     missing_lines = get_pjsk_detail_missing_lines(profile)
     total_boost_energy = await get_pjsk_detail_total_boost_energy(ctx, profile)
@@ -810,7 +790,6 @@ async def _(ctx: SekaiHandlerContext):
 # ======================= 定时通知 ======================= #
 
 # masterdata更新通知
-@RegionMasterDbManager.on_update()
 async def send_masterdata_update_notify(
     region: str, source: str,
     version: str, last_version: str,
@@ -839,7 +818,6 @@ async def send_masterdata_update_notify(
 
 
 # 广告奖励推送
-@repeat_with_interval(5, '广告奖励推送', logger)
 async def msr_auto_push():
     for region in ALL_SERVER_REGIONS:
         region_name = get_region_name(region)
